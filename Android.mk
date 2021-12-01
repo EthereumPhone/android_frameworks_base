@@ -18,12 +18,22 @@ LOCAL_PATH := $(call my-dir)
 # Load framework-specific path mappings used later in the build.
 include $(LOCAL_PATH)/pathmap.mk
 
+LOCAL_STATIC_JAVA_AAR_LIBRARIES:= geth
+
 # Build the master framework library.
 # The framework contains too many method references (>64K) for poor old DEX.
 # So we first build the framework as a monolithic static library then split it
 # up into smaller pieces.
 # ============================================================
 
+# Include Geth Library
+include $(BUILD_PACKAGE)
+
+include $(CLEAR_VARS)
+
+LOCAL_PREBUILT_STATIC_JAVA_LIBRARIES := geth:libs/geth_android.aar
+
+include $(BUILD_MULTI_PREBUILT)
 # embedded builds use nothing in frameworks/base
 ifneq ($(ANDROID_BUILD_EMBEDDED),true)
 

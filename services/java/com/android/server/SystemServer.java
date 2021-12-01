@@ -1219,6 +1219,8 @@ public final class SystemServer {
                 t.traceEnd();
             }
 
+            
+
             t.traceBegin("IpConnectivityMetrics");
             mSystemServiceManager.startService(IpConnectivityMetrics.class);
             t.traceEnd();
@@ -1242,6 +1244,14 @@ public final class SystemServer {
             t.traceBegin("AppIntegrityService");
             mSystemServiceManager.startService(AppIntegrityManagerService.class);
             t.traceEnd();
+            
+            try {
+                Slog.i("System", "Starting GethNode");
+                ServiceManager.addService("gethNode", new GethService());
+                Slog.i("System", "Started GethNode");
+            } catch (Throwable e) {
+                Slog.e("System", "Failed starting GethNode", e);
+            }
 
         } catch (Throwable e) {
             Slog.e("System", "******************************************");
