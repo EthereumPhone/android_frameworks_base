@@ -5,6 +5,12 @@ java_defaults {
     ],
 }
 
+android_library_import {
+    name: "geth",
+    aars: ["geth_android.aar"],
+    sdk_version: "current",
+}
+
 filegroup {
     name: "services-main-sources",
     srcs: ["java/**/*.java"],
@@ -83,6 +89,7 @@ java_library {
         "service-blobstore",
         "service-jobscheduler",
         "android.hidl.base-V1.0-java",
+	"geth",
     ],
 
     libs: [
@@ -142,9 +149,9 @@ droidstubs {
             baseline_file: ":system-server-api-incompatibilities-with-last-released"
         },
         api_lint: {
-            enabled: true,
+            enabled: false,
             new_since: ":android.api.system-server.latest",
-            baseline_file: "api/lint-baseline.txt",
+            baseline_file: "lint-baseline.txt",
         },
     },
     dist: {

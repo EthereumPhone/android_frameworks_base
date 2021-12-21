@@ -56,6 +56,7 @@ filegroup {
     visibility: ["//frameworks/base/test-mock"],
 }
 
+
 filegroup {
     name: "framework-drm-sources",
     srcs: [
@@ -463,6 +464,14 @@ filegroup {
         "core/java/android/os/IExternalVibratorService.aidl",
     ],
     path: "core/java",
+}
+
+filegroup {
+   name: "gethservice_aidl",
+   srcs: [
+       "core/java/android/os/IGethService.aidl",
+   ],
+   path: "core/java/android/os",
 }
 
 filegroup {
@@ -1222,7 +1231,8 @@ metalava_framework_docs_args = "--manifest $(location core/res/AndroidManifest.x
     "--api-lint-ignore-prefix android.icu. " +
     "--api-lint-ignore-prefix java. " +
     "--api-lint-ignore-prefix junit. " +
-    "--api-lint-ignore-prefix org. "
+    "--api-lint-ignore-prefix org. " +
+    "--api-lint-ignore-prefix android.os.IGethService"
 
 build = [
     "StubLibraries.bp",

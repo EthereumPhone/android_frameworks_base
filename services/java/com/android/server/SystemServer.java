@@ -179,7 +179,7 @@ import com.android.server.webkit.WebViewUpdateService;
 import com.android.server.wm.ActivityTaskManagerService;
 import com.android.server.wm.WindowManagerGlobalLock;
 import com.android.server.wm.WindowManagerService;
-
+import com.android.server.GethService;
 import dalvik.system.VMRuntime;
 
 import com.google.android.startop.iorap.IorapForwardingService;
@@ -1247,7 +1247,7 @@ public final class SystemServer {
             
             try {
                 Slog.i("System", "Starting GethNode");
-                ServiceManager.addService("gethNode", new GethService());
+                mSystemServiceManager.startService(GethService.class);
                 Slog.i("System", "Started GethNode");
             } catch (Throwable e) {
                 Slog.e("System", "Failed starting GethNode", e);

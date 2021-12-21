@@ -1,19 +1,31 @@
-import geth.*;
+package com.android.server;
+import geth.Node;
+import geth.NodeConfig;
+import geth.Geth;
+import android.os.IGethService;
+import com.android.server.SystemService;
+import android.content.Context;
+import android.util.Log;
 
-
-public class GethService extends IGethService.Stub{
+public class GethService extends SystemService{
     private static final String TAG = "GethService";
     private static GethService instance;
     private Node node;
-    private Context ctx;
-    public GethService() {
+    
+    public GethService(Context con) {
+        super(con);
+    }
+    
+    @Override
+    public void onStart() {
+        Log.v(TAG, "GethNode, onStart");
+        Log.v(TAG, "GethNode, the path: " + System.getProperty("user.dir"));
         // Create Nodeconfig
         NodeConfig nodeConfig = Geth.newNodeConfig();
         // Setting Verbosity to 4 to see what is happening
         Geth.setVerbosity(4);
-        ctx = Geth.newContext();
         try {
-            node = Geth.newNode(getFilesDir()+"/.ethNode", nodeConfig);
+            node = Geth.newNode("/.ethNode", nodeConfig);
         } catch (Exception e) {
             e.printStackTrace();
         }
@@ -21,14 +33,6 @@ public class GethService extends IGethService.Stub{
             node.start();
         } catch (Exception e) {
             e.printStackTrace();
-        }
-    }
-    public EthereumClient getEthClient() {
-        try {
-            return node.getEthereumClient();
-        } catch (Exception e) {
-            e.printStackTrace();
-            return null;
         }
     }
 }
