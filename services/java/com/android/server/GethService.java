@@ -1,11 +1,11 @@
 package com.android.server;
-import geth.Node;
-import geth.NodeConfig;
-import geth.Geth;
+import geth.*;
 import android.os.IGethService;
 import com.android.server.SystemService;
 import android.content.Context;
 import android.util.Log;
+import android.os.Environment;
+
 
 public class GethService extends SystemService{
     private static final String TAG = "GethService";
@@ -14,18 +14,18 @@ public class GethService extends SystemService{
     
     public GethService(Context con) {
         super(con);
+        Log.v(TAG, "GethNode, onCreate");
     }
     
     @Override
     public void onStart() {
-        Log.v(TAG, "GethNode, onStart");
-        Log.v(TAG, "GethNode, the path: " + System.getProperty("user.dir"));
-        // Create Nodeconfig
-        NodeConfig nodeConfig = Geth.newNodeConfig();
+        Log.v(TAG, "GethNode, onStart" + Environment.getDataDirectory());
+        //String pathList = System.getProperty("java.library.path", ".");
         // Setting Verbosity to 4 to see what is happening
-        Geth.setVerbosity(4);
         try {
-            node = Geth.newNode("/.ethNode", nodeConfig);
+            Geth.setVerbosity(4);
+            NodeConfig nodeConfig = Geth.newNodeConfig();
+            node = Geth.newNode(Environment.getDataDirectory()+"/.ethNode", nodeConfig);
         } catch (Exception e) {
             e.printStackTrace();
         }
@@ -34,5 +34,7 @@ public class GethService extends SystemService{
         } catch (Exception e) {
             e.printStackTrace();
         }
+        Log.v(TAG, "GethNode, successfully started :)");
+        
     }
 }

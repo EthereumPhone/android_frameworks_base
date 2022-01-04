@@ -1,4 +1,3 @@
-#
 # Copyright (C) 2008 The Android Open Source Project
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -14,6 +13,7 @@
 # limitations under the License.
 #
 LOCAL_PATH := $(call my-dir)
+
 
 # Load framework-specific path mappings used later in the build.
 include $(LOCAL_PATH)/pathmap.mk
@@ -31,7 +31,6 @@ ifneq ($(ANDROID_BUILD_EMBEDDED),true)
 # specified relative to the root of the build tree.
 # ============================================================
 include $(CLEAR_VARS)
-
 
 # This is used by ide.mk as the list of source files that are
 # always included.
@@ -79,3 +78,4 @@ include $(call first-makefiles-under,$(LOCAL_PATH))
 endif
 
 endif # ANDROID_BUILD_EMBEDDED
+

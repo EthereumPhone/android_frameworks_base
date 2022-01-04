@@ -9,7 +9,9 @@ android_library_import {
     name: "geth",
     aars: ["geth_android.aar"],
     sdk_version: "current",
+    min_sdk_version: "15", // optional
 }
+
 
 filegroup {
     name: "services-main-sources",
