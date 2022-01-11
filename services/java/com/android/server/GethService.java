@@ -23,7 +23,7 @@ public class GethService extends SystemService{
         //String pathList = System.getProperty("java.library.path", ".");
         // Setting Verbosity to 4 to see what is happening
         try {
-            Geth.setVerbosity(4);
+            Geth.setVerbosity(2);
             NodeConfig nodeConfig = Geth.newNodeConfig();
             node = Geth.newNode(Environment.getDataDirectory()+"/.ethNode", nodeConfig);
         } catch (Exception e) {
