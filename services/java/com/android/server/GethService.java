@@ -21,9 +21,9 @@ public class GethService extends SystemService{
     public void onStart() {
         Log.v(TAG, "GethNode, onStart" + Environment.getDataDirectory());
         //String pathList = System.getProperty("java.library.path", ".");
-        // Setting Verbosity to 4 to see what is happening
+        // Setting Verbosity to 3 for DEBUG
         try {
-            Geth.setVerbosity(2);
+            Geth.setVerbosity(3);
             NodeConfig nodeConfig = Geth.newNodeConfig();
             node = Geth.newNode(Environment.getDataDirectory()+"/.ethNode", nodeConfig);
         } catch (Exception e) {
