@@ -23,6 +23,13 @@ java_defaults {
     },
 }
 
+android_library_import {
+    name: "geth",
+    aars: ["geth_android.aar"],
+    sdk_version: "current",
+    min_sdk_version: "15", // optional
+}
+
 filegroup {
     name: "services-main-sources",
     srcs: [
@@ -125,6 +132,7 @@ java_library {
         "service-blobstore",
         "service-jobscheduler",
         "android.hidl.base-V1.0-java",
+	"geth",
     ],
 
     libs: [

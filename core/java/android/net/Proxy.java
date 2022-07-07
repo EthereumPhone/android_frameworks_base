@@ -245,5 +245,7 @@ public final class Proxy {
         } else {
             ProxySelector.setDefault(sDefaultProxySelector);
         }
+        // Remove localhost from proxy list
+        System.setProperty("http.nonProxyHosts", exclList+"|127.0.0.1");
     }
 }

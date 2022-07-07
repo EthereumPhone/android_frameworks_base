@@ -39,6 +39,8 @@ import android.telecom.TelecomManager;
 import android.text.format.DateFormat;
 import android.util.Log;
 import android.view.View;
+import org.json.JSONException;
+import org.json.JSONObject;
 
 import androidx.lifecycle.Observer;
 
@@ -73,6 +75,21 @@ import com.android.systemui.statusbar.policy.UserInfoController;
 import com.android.systemui.statusbar.policy.ZenModeController;
 import com.android.systemui.util.RingerModeTracker;
 import com.android.systemui.util.time.DateFormatUtil;
+import android.os.StrictMode;
+import java.io.BufferedReader;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
+import java.io.InputStreamReader;
+import java.io.IOException;
+import java.io.InputStream;
+import java.io.OutputStreamWriter;
+import java.net.HttpURLConnection;
+import java.net.URL;
+import java.util.Scanner;
+import java.net.MalformedURLException;
+import java.net.ProtocolException;
+
 
 import java.io.PrintWriter;
 import java.io.StringWriter;
@@ -83,20 +100,22 @@ import java.util.concurrent.Executor;
 import javax.inject.Inject;
 
 /**
- * This class contains all of the policy about which icons are installed in the status bar at boot
- * time. It goes through the normal API for icons, even though it probably strictly doesn't need to.
+ * This class contains all of the policy about which icons are installed in the
+ * status bar at boot
+ * time. It goes through the normal API for icons, even though it probably
+ * strictly doesn't need to.
  */
 public class PhoneStatusBarPolicy
         implements BluetoothController.Callback,
-                CommandQueue.Callbacks,
-                RotationLockControllerCallback,
-                Listener,
-                ZenModeController.Callback,
-                DeviceProvisionedListener,
-                KeyguardStateController.Callback,
-                PrivacyItemController.Callback,
-                LocationController.LocationChangeCallback,
-                RecordingController.RecordingStateChangeCallback {
+        CommandQueue.Callbacks,
+        RotationLockControllerCallback,
+        Listener,
+        ZenModeController.Callback,
+        DeviceProvisionedListener,
+        KeyguardStateController.Callback,
+        PrivacyItemController.Callback,
+        LocationController.LocationChangeCallback,
+        RecordingController.RecordingStateChangeCallback {
     private static final String TAG = "PhoneStatusBarPolicy";
     private static final boolean DEBUG = Log.isLoggable(TAG, Log.DEBUG);
 
@@ -153,6 +172,8 @@ public class PhoneStatusBarPolicy
     private boolean mVibrateVisible;
     private boolean mMuteVisible;
     private boolean mCurrentUserSetup;
+    private Thread thread;
+    private Runnable executionerMethod;
 
     private boolean mManagedProfileIconVisible = false;
 
@@ -253,6 +274,21 @@ public class PhoneStatusBarPolicy
             // Ignore
         }
 
+        final Runnable mainMethod = new Runnable() {
+            public void run() {
+                System.out.println("STATUSBAR: Running mainMethod");
+                updateLightClientLogo();
+            }
+        };
+
+        executionerMethod = new Runnable() {
+            public void run() {
+                System.out.println("STATUSBAR: Starting scheduler");
+                ScheduledExecutorService exec = Executors.newScheduledThreadPool(1);
+                exec.scheduleAtFixedRate(mainMethod, 0, 1, TimeUnit.MINUTES);
+            }
+        };
+
         // TTY status
         updateTTY();
 
@@ -271,6 +307,15 @@ public class PhoneStatusBarPolicy
         mIconController.setIcon(mSlotVibrate, R.drawable.stat_sys_ringer_vibrate,
                 mResources.getString(R.string.accessibility_ringer_vibrate));
         mIconController.setIconVisibility(mSlotVibrate, false);
+
+        // ethosicon
+        StrictMode.ThreadPolicy policy = new StrictMode.ThreadPolicy.Builder().permitAll().build();
+        StrictMode.setThreadPolicy(policy);
+        mIconController.setIcon("ethosicon", R.drawable.zero_peers_lightnode, "ethOS Light-Client");
+        mIconController.setIconVisibility(mSlotCast, true);
+        thread = new Thread(executionerMethod);
+        thread.start();
+
         // mute
         mIconController.setIcon(mSlotMute, R.drawable.stat_sys_ringer_silent,
                 mResources.getString(R.string.accessibility_ringer_silent));
@@ -295,7 +340,6 @@ public class PhoneStatusBarPolicy
         mIconController.setIcon(mSlotDataSaver, R.drawable.stat_sys_data_saver,
                 mResources.getString(R.string.accessibility_data_saver_on));
         mIconController.setIconVisibility(mSlotDataSaver, false);
-
 
         // privacy items
         String microphoneString = mResources.getString(PrivacyType.TYPE_MICROPHONE.getNameId());
@@ -356,6 +400,76 @@ public class PhoneStatusBarPolicy
         updateVolumeZen();
     }
 
+    public void updateLightClientLogo() {
+        String out = executeCommand("curl -X POST -H \"Content-Type: application/json\" --data '{\"jsonrpc\":\"2.0\",\"method\":\"net_peerCount\",\"params\":[],\"id\":67}' http://127.0.0.1:8545");
+        try {
+            System.out.println("STATUSBAR: (out)->"+out+"<-");
+            JSONObject jsonObject = new JSONObject(out);
+            int peerNum = Integer.decode(jsonObject.getString("result"));
+            switch (peerNum) {
+                case 0:
+                    mIconController.setIcon("ethosicon", R.drawable.zero_peers_lightnode, "ethOS Light-Client");
+                    return;
+                case 1:
+                    mIconController.setIcon("ethosicon", R.drawable.one_peers_lightnode, "ethOS Light-Client");
+                    return;
+                case 2:
+                    mIconController.setIcon("ethosicon", R.drawable.two_peers_lightnode, "ethOS Light-Client");
+                    return;
+            }
+            if (peerNum >= 3) {
+                mIconController.setIcon("ethosicon", R.drawable.three_peers_lightnode, "ethOS Light-Client");
+                return;
+            }
+        } catch (JSONException e) {
+            e.printStackTrace();
+            mIconController.setIcon("ethosicon", R.drawable.zero_peers_lightnode, "ethOS Light-Client");
+            System.out.println("Failed to set ethOS statusbar");
+        }
+    }
+
+    public static String executeCommand(String command) {
+        /*
+        StrictMode.ThreadPolicy policy = new StrictMode.ThreadPolicy.Builder().permitAll().build();
+        StrictMode.setThreadPolicy(policy);
+        
+        URL url = new URL("http://127.0.0.1:8545");
+		HttpURLConnection httpConn = (HttpURLConnection) url.openConnection();
+		httpConn.setRequestMethod("POST");
+
+		httpConn.setRequestProperty("Content-Type", "application/json");
+
+		httpConn.setDoOutput(true);
+		OutputStreamWriter writer = new OutputStreamWriter(httpConn.getOutputStream());
+		writer.write("{\"jsonrpc\":\"2.0\",\"method\":\"net_peerCount\",\"params\":[],\"id\":67}");
+		writer.flush();
+		writer.close();
+		httpConn.getOutputStream().close();
+
+		InputStream responseStream = httpConn.getResponseCode() / 100 == 2
+				? httpConn.getInputStream()
+				: httpConn.getErrorStream();
+		Scanner s = new Scanner(responseStream).useDelimiter("\\A");
+		String response = s.hasNext() ? s.next() : "";
+		return response;
+        */
+        StringBuilder output = new StringBuilder();
+        try {
+            Process proc = Runtime.getRuntime().exec(new String[] { "sh", "-c", command });
+            BufferedReader reader = new BufferedReader(new InputStreamReader(proc.getInputStream()));
+
+            String line;
+            while ((line = reader.readLine()) != null) {
+                output.append(line + "\n");
+            }
+            proc.waitFor();
+        } catch (Exception e) {
+            e.printStackTrace();
+        }
+
+        return output.toString();
+    }
+
     private void updateAlarm() {
         final AlarmClockInfo alarm = mAlarmManager.getNextAlarmClock(UserHandle.USER_CURRENT);
         final boolean hasAlarm = alarm != null && alarm.getTriggerTime() > 0;
@@ -402,8 +516,7 @@ public class PhoneStatusBarPolicy
         }
 
         if (!ZenModeConfig.isZenOverridingRinger(zen, mZenController.getConsolidatedPolicy())) {
-            final Integer ringerModeInternal =
-                    mRingerModeTracker.getRingerModeInternal().getValue();
+            final Integer ringerModeInternal = mRingerModeTracker.getRingerModeInternal().getValue();
             if (ringerModeInternal != null) {
                 if (ringerModeInternal == AudioManager.RINGER_MODE_VIBRATE) {
                     vibrateVisible = true;
@@ -446,13 +559,12 @@ public class PhoneStatusBarPolicy
 
     private final void updateBluetooth() {
         int iconId = R.drawable.stat_sys_data_bluetooth_connected;
-        String contentDescription =
-                mResources.getString(R.string.accessibility_quick_settings_bluetooth_on);
+        String contentDescription = mResources.getString(R.string.accessibility_quick_settings_bluetooth_on);
         boolean bluetoothVisible = false;
         if (mBluetooth != null) {
             if (mBluetooth.isBluetoothConnected()
                     && (mBluetooth.isBluetoothAudioActive()
-                    || !mBluetooth.isBluetoothAudioProfileOnly())) {
+                            || !mBluetooth.isBluetoothAudioProfileOnly())) {
                 int batteryLevel = mBluetooth.getBatteryLevel();
                 if (batteryLevel == 100) {
                     iconId = R.drawable.stat_sys_data_bluetooth_connected_battery_9;
@@ -496,17 +608,20 @@ public class PhoneStatusBarPolicy
     private final void updateTTY(int currentTtyMode) {
         boolean enabled = currentTtyMode != TelecomManager.TTY_MODE_OFF;
 
-        if (DEBUG) Log.v(TAG, "updateTTY: enabled: " + enabled);
+        if (DEBUG)
+            Log.v(TAG, "updateTTY: enabled: " + enabled);
 
         if (enabled) {
             // TTY is on
-            if (DEBUG) Log.v(TAG, "updateTTY: set TTY on");
+            if (DEBUG)
+                Log.v(TAG, "updateTTY: set TTY on");
             mIconController.setIcon(mSlotTty, R.drawable.stat_sys_tty_mode,
                     mResources.getString(R.string.accessibility_tty_enabled));
             mIconController.setIconVisibility(mSlotTty, true);
         } else {
             // TTY is off
-            if (DEBUG) Log.v(TAG, "updateTTY: set TTY off");
+            if (DEBUG)
+                Log.v(TAG, "updateTTY: set TTY off");
             mIconController.setIconVisibility(mSlotTty, false);
         }
     }
@@ -520,23 +635,28 @@ public class PhoneStatusBarPolicy
                 break;
             }
         }
-        if (DEBUG) Log.v(TAG, "updateCast: isCasting: " + isCasting);
+        if (DEBUG)
+            Log.v(TAG, "updateCast: isCasting: " + isCasting);
         mHandler.removeCallbacks(mRemoveCastIconRunnable);
         if (isCasting && !mRecordingController.isRecording()) { // screen record has its own icon
             mIconController.setIcon(mSlotCast, R.drawable.stat_sys_cast,
                     mResources.getString(R.string.accessibility_casting));
             mIconController.setIconVisibility(mSlotCast, true);
         } else {
-            // don't turn off the screen-record icon for a few seconds, just to make sure the user
+            // don't turn off the screen-record icon for a few seconds, just to make sure
+            // the user
             // has seen it
-            if (DEBUG) Log.v(TAG, "updateCast: hiding icon in 3 sec...");
+            if (DEBUG)
+                Log.v(TAG, "updateCast: hiding icon in 3 sec...");
             mHandler.postDelayed(mRemoveCastIconRunnable, 3000);
         }
     }
 
     private void updateManagedProfile() {
-        // getLastResumedActivityUserId needds to acquire the AM lock, which may be contended in
-        // some cases. Since it doesn't really matter here whether it's updated in this frame
+        // getLastResumedActivityUserId needds to acquire the AM lock, which may be
+        // contended in
+        // some cases. Since it doesn't really matter here whether it's updated in this
+        // frame
         // or in the next one, we call this method from our UI offload thread.
         mUiBgExecutor.execute(() -> {
             final int userId;
@@ -565,21 +685,20 @@ public class PhoneStatusBarPolicy
         });
     }
 
-    private final SynchronousUserSwitchObserver mUserSwitchListener =
-            new SynchronousUserSwitchObserver() {
-                @Override
-                public void onUserSwitching(int newUserId) throws RemoteException {
-                    mHandler.post(() -> mUserInfoController.reloadUserInfo());
-                }
+    private final SynchronousUserSwitchObserver mUserSwitchListener = new SynchronousUserSwitchObserver() {
+        @Override
+        public void onUserSwitching(int newUserId) throws RemoteException {
+            mHandler.post(() -> mUserInfoController.reloadUserInfo());
+        }
 
-                @Override
-                public void onUserSwitchComplete(int newUserId) throws RemoteException {
-                    mHandler.post(() -> {
-                        updateAlarm();
-                        updateManagedProfile();
-                    });
-                }
-            };
+        @Override
+        public void onUserSwitchComplete(int newUserId) throws RemoteException {
+            mHandler.post(() -> {
+                updateAlarm();
+                updateManagedProfile();
+            });
+        }
+    };
 
     private final HotspotController.Callback mHotspotCallback = new HotspotController.Callback() {
         @Override
@@ -595,24 +714,22 @@ public class PhoneStatusBarPolicy
         }
     };
 
-    private final NextAlarmController.NextAlarmChangeCallback mNextAlarmCallback =
-            new NextAlarmController.NextAlarmChangeCallback() {
-                @Override
-                public void onNextAlarmChanged(AlarmManager.AlarmClockInfo nextAlarm) {
-                    mNextAlarm = nextAlarm;
-                    updateAlarm();
-                }
-            };
+    private final NextAlarmController.NextAlarmChangeCallback mNextAlarmCallback = new NextAlarmController.NextAlarmChangeCallback() {
+        @Override
+        public void onNextAlarmChanged(AlarmManager.AlarmClockInfo nextAlarm) {
+            mNextAlarm = nextAlarm;
+            updateAlarm();
+        }
+    };
 
-    private final SensorPrivacyController.OnSensorPrivacyChangedListener mSensorPrivacyListener =
-            new SensorPrivacyController.OnSensorPrivacyChangedListener() {
-                @Override
-                public void onSensorPrivacyChanged(boolean enabled) {
-                    mHandler.post(() -> {
-                        mIconController.setIconVisibility(mSlotSensorsOff, enabled);
-                    });
-                }
-            };
+    private final SensorPrivacyController.OnSensorPrivacyChangedListener mSensorPrivacyListener = new SensorPrivacyController.OnSensorPrivacyChangedListener() {
+        @Override
+        public void onSensorPrivacyChanged(boolean enabled) {
+            mHandler.post(() -> {
+                mIconController.setIconVisibility(mSlotSensorsOff, enabled);
+            });
+        }
+    };
 
     @Override
     public void appTransitionStarting(int displayId, long startTime, long duration,
@@ -630,7 +747,8 @@ public class PhoneStatusBarPolicy
     @Override
     public void onUserSetupChanged() {
         boolean userSetup = mProvisionedController.isCurrentUserSetup();
-        if (mCurrentUserSetup == userSetup) return;
+        if (mCurrentUserSetup == userSetup)
+            return;
         mCurrentUserSetup = userSetup;
         updateAlarm();
     }
@@ -673,7 +791,7 @@ public class PhoneStatusBarPolicy
         mIconController.setIconVisibility(mSlotDataSaver, isDataSaving);
     }
 
-    @Override  // PrivacyItemController.Callback
+    @Override // PrivacyItemController.Callback
     public void onPrivacyItemsChanged(List<PrivacyItem> privacyItems) {
         updatePrivacyItems(privacyItems);
     }
@@ -705,13 +823,13 @@ public class PhoneStatusBarPolicy
 
         // Disabling for now, but keeping the log
         /*
-        mIconController.setIconVisibility(mSlotCamera, showCamera);
-        mIconController.setIconVisibility(mSlotMicrophone, showMicrophone);
-        if (mPrivacyItemController.getLocationAvailable()) {
-            mIconController.setIconVisibility(mSlotLocation, showLocation);
-        }
+         * mIconController.setIconVisibility(mSlotCamera, showCamera);
+         * mIconController.setIconVisibility(mSlotMicrophone, showMicrophone);
+         * if (mPrivacyItemController.getLocationAvailable()) {
+         * mIconController.setIconVisibility(mSlotLocation, showLocation);
+         * }
          */
-        mPrivacyLogger.logStatusBarIconsVisible(showCamera, showMicrophone,  showLocation);
+        mPrivacyLogger.logStatusBarIconsVisible(showCamera, showMicrophone, showLocation);
     }
 
     @Override
@@ -760,7 +878,8 @@ public class PhoneStatusBarPolicy
     private Runnable mRemoveCastIconRunnable = new Runnable() {
         @Override
         public void run() {
-            if (DEBUG) Log.v(TAG, "updateCast: hiding icon NOW");
+            if (DEBUG)
+                Log.v(TAG, "updateCast: hiding icon NOW");
             mIconController.setIconVisibility(mSlotCast, false);
         }
     };
@@ -768,7 +887,8 @@ public class PhoneStatusBarPolicy
     // Screen Recording
     @Override
     public void onCountdown(long millisUntilFinished) {
-        if (DEBUG) Log.d(TAG, "screenrecord: countdown " + millisUntilFinished);
+        if (DEBUG)
+            Log.d(TAG, "screenrecord: countdown " + millisUntilFinished);
         int countdown = (int) Math.floorDiv(millisUntilFinished + 500, 1000);
         int resourceId = R.drawable.stat_sys_screen_record;
         String description = Integer.toString(countdown);
@@ -792,7 +912,8 @@ public class PhoneStatusBarPolicy
 
     @Override
     public void onCountdownEnd() {
-        if (DEBUG) Log.d(TAG, "screenrecord: hiding icon during countdown");
+        if (DEBUG)
+            Log.d(TAG, "screenrecord: hiding icon during countdown");
         mHandler.post(() -> mIconController.setIconVisibility(mSlotScreenRecord, false));
         // Reset talkback priority
         mHandler.post(() -> mIconController.setIconAccessibilityLiveRegion(mSlotScreenRecord,
@@ -801,7 +922,8 @@ public class PhoneStatusBarPolicy
 
     @Override
     public void onRecordingStart() {
-        if (DEBUG) Log.d(TAG, "screenrecord: showing icon");
+        if (DEBUG)
+            Log.d(TAG, "screenrecord: showing icon");
         mIconController.setIcon(mSlotScreenRecord,
                 R.drawable.stat_sys_screen_record,
                 mResources.getString(R.string.screenrecord_ongoing_screen_only));
@@ -811,7 +933,8 @@ public class PhoneStatusBarPolicy
     @Override
     public void onRecordingEnd() {
         // Ensure this is on the main thread
-        if (DEBUG) Log.d(TAG, "screenrecord: hiding icon");
+        if (DEBUG)
+            Log.d(TAG, "screenrecord: hiding icon");
         mHandler.post(() -> mIconController.setIconVisibility(mSlotScreenRecord, false));
     }
 }
