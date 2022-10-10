@@ -30,6 +30,21 @@ android_library_import {
     min_sdk_version: "15", // optional
 }
 
+java_import {
+    name: "web3j-core",
+    host_supported: true,
+    installable: false,
+    jars: ["web3j-core-4.8.8-android.jar"],
+}
+
+java_import {
+    name: "web3j-crypto",
+    host_supported: true,
+    installable: false,
+    jars: ["crypto-4.8.8-android.jar"],
+}
+
+
 filegroup {
     name: "services-main-sources",
     srcs: [
@@ -132,7 +147,9 @@ java_library {
         "service-blobstore",
         "service-jobscheduler",
         "android.hidl.base-V1.0-java",
-	"geth",
+	    "geth",
+        "web3j-core",
+        "web3j-crypto",
     ],
 
     libs: [

@@ -225,6 +225,9 @@ import java.util.TreeSet;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.Future;
 import com.android.server.GethService;
+import com.android.server.WalletService;
+import com.android.server.PrivateWalletService;
+
 
 /**
  * Entry point to {@code system_server}.
@@ -982,7 +985,6 @@ public final class SystemServer implements Dumpable {
         ActivityThread activityThread = ActivityThread.systemMain();
         mSystemContext = activityThread.getSystemContext();
         mSystemContext.setTheme(DEFAULT_SYSTEM_THEME);
-
         final Context systemUiContext = activityThread.getSystemUiContext();
         systemUiContext.setTheme(DEFAULT_SYSTEM_THEME);
     }
@@ -1242,12 +1244,32 @@ public final class SystemServer implements Dumpable {
         mSystemServiceManager.startService(new SensorPrivacyService(mSystemContext));
         t.traceEnd();
 
-	try {
-        	Slog.i("System", "Starting GethNode");
-                mSystemServiceManager.startService(GethService.class);
-                Slog.i("System", "Started GethNode");
+	    try {
+            t.traceBegin("GethService");
+            GethService gethService = new GethService();
+            ServiceManager.addService("geth", gethService);
+            t.traceEnd();
         } catch (Throwable e) {
-                Slog.e("System", "Failed starting GethNode", e);
+            Slog.e("System", "Failed starting GethNode", e);
+        }
+
+        try {
+            t.traceBegin("WalletService");
+            WalletService walletService = new WalletService(mSystemContext);
+            ServiceManager.addService("wallet_proxy", walletService);
+            t.traceEnd();
+        } catch (Throwable e) {
+            Slog.e("System", "Failed starting WalletService", e);
+        }
+
+        // Private WalletService
+        try {
+            t.traceBegin("PrivateWalletService");
+            PrivateWalletService privateWalletService = new PrivateWalletService(mSystemContext);
+            ServiceManager.addService("private_wallet_proxy", privateWalletService);
+            t.traceEnd();
+        } catch (Throwable e) {
+            Slog.e("System", "Failed starting PrivateWalletService", e);
         }
 
         if (SystemProperties.getInt("persist.sys.displayinset.top", 0) > 0) {

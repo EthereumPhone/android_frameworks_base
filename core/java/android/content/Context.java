@@ -545,6 +545,13 @@ public abstract class Context {
      */
     public static final int RECEIVER_VISIBLE_TO_INSTANT_APPS = 0x1;
 
+
+    /**
+     * GethService String
+     * @return
+     */
+    public static final String GETH_SERVICE = "geth";
+
     /**
      * Returns an AssetManager instance for the application's package.
      * <p>

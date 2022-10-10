@@ -280,6 +280,8 @@ import android.view.displayhash.DisplayHash;
 import android.view.displayhash.VerifiedDisplayHash;
 import android.window.ClientWindowFrames;
 import android.window.TaskSnapshot;
+import java.lang.reflect.InvocationTargetException;
+import java.lang.reflect.Method;
 
 import com.android.internal.R;
 import com.android.internal.annotations.VisibleForTesting;
@@ -1023,6 +1025,7 @@ public class WindowManagerService extends IWindowManager.Stub
     final InputManagerService mInputManager;
     final DisplayManagerInternal mDisplayManagerInternal;
     final DisplayManager mDisplayManager;
+    final Object gethShutdownManager;
     final ActivityTaskManagerService mAtmService;
 
     /** Indicates whether this device supports wide color gamut / HDR rendering */
@@ -1281,6 +1284,8 @@ public class WindowManagerService extends IWindowManager.Stub
         LocalServices.addService(WindowManagerPolicy.class, mPolicy);
 
         mDisplayManager = (DisplayManager)context.getSystemService(Context.DISPLAY_SERVICE);
+        gethShutdownManager = context.getSystemService("geth");
+
 
         mKeyguardDisableHandler = KeyguardDisableHandler.create(mContext, mPolicy, mH);
 
@@ -3494,10 +3499,37 @@ public class WindowManagerService extends IWindowManager.Stub
         mInputManager.switchKeyboardLayout(deviceId, direction);
     }
 
+    // Shutdown geth client
+    public void shutdownGeth() {
+        System.out.println("GoLog: Shutting down client in shutdown of phone");
+        Class cls = null;
+        try {
+            cls = Class.forName("android.os.GethProxy");
+        } catch (ClassNotFoundException e) {
+            e.printStackTrace();
+        }        
+
+        Method shutdownWithoutPreference = null;
+        try {
+            shutdownWithoutPreference = cls.getMethod("shutdownWithoutPreference");
+        } catch (NoSuchMethodException e) {
+            e.printStackTrace();
+        }
+
+        try {
+            shutdownWithoutPreference.invoke(gethShutdownManager);
+        } catch (IllegalAccessException e) {
+            e.printStackTrace();
+        } catch (InvocationTargetException e) {
+            e.printStackTrace();
+        }
+    }
+
     // Called by window manager policy.  Not exposed externally.
     @Override
     public void shutdown(boolean confirm) {
         // Pass in the UI context, since ShutdownThread requires it (to show UI).
+        shutdownGeth();
         ShutdownThread.shutdown(ActivityThread.currentActivityThread().getSystemUiContext(),
                 PowerManager.SHUTDOWN_USER_REQUESTED, confirm);
     }
@@ -3505,6 +3537,7 @@ public class WindowManagerService extends IWindowManager.Stub
     // Called by window manager policy.  Not exposed externally.
     @Override
     public void reboot(boolean confirm) {
+        shutdownGeth();
         // Pass in the UI context, since ShutdownThread requires it (to show UI).
         ShutdownThread.reboot(ActivityThread.currentActivityThread().getSystemUiContext(),
                 PowerManager.SHUTDOWN_USER_REQUESTED, confirm);
@@ -3513,6 +3546,7 @@ public class WindowManagerService extends IWindowManager.Stub
     // Called by window manager policy.  Not exposed externally.
     @Override
     public void reboot(boolean confirm, String reason) {
+        shutdownGeth();
         // Pass in the UI context, since ShutdownThread requires it (to show UI).
         ShutdownThread.rebootCustom(ActivityThread.currentActivityThread().getSystemUiContext(),
                 reason, confirm);
@@ -3521,6 +3555,7 @@ public class WindowManagerService extends IWindowManager.Stub
     // Called by window manager policy.  Not exposed externally.
     @Override
     public void rebootSafeMode(boolean confirm) {
+        shutdownGeth();
         // Pass in the UI context, since ShutdownThread requires it (to show UI).
         ShutdownThread.rebootSafeMode(ActivityThread.currentActivityThread().getSystemUiContext(),
                 confirm);

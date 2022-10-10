@@ -161,6 +161,7 @@ import android.os.IHardwarePropertiesManager;
 import android.os.IPowerManager;
 import android.os.IRecoverySystem;
 import android.os.ISystemUpdateManager;
+import android.os.IGethService;
 import android.os.IThermalService;
 import android.os.IUserManager;
 import android.os.IncidentManager;
@@ -176,6 +177,9 @@ import android.os.SystemVibrator;
 import android.os.SystemVibratorManager;
 import android.os.UserHandle;
 import android.os.UserManager;
+import android.os.GethProxy;
+import android.os.WalletProxy;
+import android.os.PrivateWalletProxy;
 import android.os.Vibrator;
 import android.os.VibratorManager;
 import android.os.health.SystemHealthManager;
@@ -272,6 +276,41 @@ public final class SystemServiceRegistry {
             @Override
             public AccessibilityManager createService(ContextImpl ctx) {
                 return AccessibilityManager.getInstance(ctx);
+            }});
+
+        // GethService
+        /**
+        registerService(Context.GETH_SERVICE, GethProxy.class,
+            new CachedServiceFetcher<GethProxy>() {
+            @Override
+            public GethProxy createService(ContextImpl ctx) {
+                return GethProxy.getGethProxy();
+            }});
+         
+        registerService("geth", GethProxy.class, new ServiceFetcher<GethProxy>() {
+            public GethProxy createService(ContextImpl ctx) {
+                return GethProxy.getGethProxy();
+            }});
+        */
+        registerService("geth", GethProxy.class,
+            new StaticServiceFetcher<GethProxy>() {
+            @Override
+            public GethProxy createService() throws ServiceNotFoundException {
+                return GethProxy.getGethProxy();
+            }});
+        
+        registerService("wallet_proxy", WalletProxy.class,
+            new CachedServiceFetcher<WalletProxy>() {
+            @Override
+            public WalletProxy createService(ContextImpl ctx) {
+                return WalletProxy.getWalletProxy();
+            }});
+
+        registerService("private_wallet_proxy", PrivateWalletProxy.class,
+            new CachedServiceFetcher<PrivateWalletProxy>() {
+            @Override
+            public PrivateWalletProxy createService(ContextImpl ctx) {
+                return PrivateWalletProxy.getWalletProxy();
             }});
 
         registerService(Context.CAPTIONING_SERVICE, CaptioningManager.class,
@@ -667,6 +706,7 @@ public final class SystemServiceRegistry {
                         ISystemUpdateManager service = ISystemUpdateManager.Stub.asInterface(b);
                         return new SystemUpdateManager(service);
                     }});
+        
 
         registerService(Context.SYSTEM_CONFIG_SERVICE, SystemConfigManager.class,
                 new CachedServiceFetcher<SystemConfigManager>() {

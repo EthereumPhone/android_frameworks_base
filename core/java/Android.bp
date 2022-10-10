@@ -29,6 +29,16 @@ filegroup {
 }
 
 filegroup {
+    name: "IGethService.aidl",
+    srcs: ["android/os/IGethService.aidl"],
+}
+
+filegroup {
+    name: "IWalletService.aidl",
+    srcs: ["android/os/IWalletService.aidl"],
+}
+
+filegroup {
     name: "ITracingServiceProxy.aidl",
     srcs: ["android/tracing/ITracingServiceProxy.aidl"],
 }

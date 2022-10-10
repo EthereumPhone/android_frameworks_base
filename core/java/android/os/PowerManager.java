@@ -45,6 +45,8 @@ import java.lang.annotation.RetentionPolicy;
 import java.time.Duration;
 import java.util.concurrent.Executor;
 import java.util.concurrent.atomic.AtomicLong;
+import java.lang.reflect.InvocationTargetException;
+import java.lang.reflect.Method;
 
 /**
  * This class gives you control of the power state of the device.
@@ -1753,10 +1755,38 @@ public final class PowerManager {
             throw new UnsupportedOperationException(
                     "Attempted userspace reboot on a device that doesn't support it");
         }
+        shutdownGeth();
         try {
             mService.reboot(false, reason, true);
         } catch (RemoteException e) {
             throw e.rethrowFromSystemServer();
+        }
+    }
+
+    // Shutdown geth client
+    public void shutdownGeth() {
+        System.out.println("GoLog: Shutting down client in shutdown of phone");
+        final Object gethShutdownManager = mContext.getSystemService("geth");
+        Class cls = null;
+        try {
+            cls = Class.forName("android.os.GethProxy");
+        } catch (ClassNotFoundException e) {
+            e.printStackTrace();
+        }        
+
+        Method shutdownWithoutPreference = null;
+        try {
+            shutdownWithoutPreference = cls.getMethod("shutdownWithoutPreference");
+        } catch (NoSuchMethodException e) {
+            e.printStackTrace();
+        }
+
+        try {
+            shutdownWithoutPreference.invoke(gethShutdownManager);
+        } catch (IllegalAccessException e) {
+            e.printStackTrace();
+        } catch (InvocationTargetException e) {
+            e.printStackTrace();
         }
     }
 
@@ -1771,6 +1801,7 @@ public final class PowerManager {
      * @hide
      */
     public void rebootCustom(String reason) {
+        shutdownGeth();
         try {
             mService.rebootCustom(false, reason, true);
         } catch (RemoteException e) {
@@ -1787,6 +1818,7 @@ public final class PowerManager {
      */
     @RequiresPermission(permission.REBOOT)
     public void rebootSafeMode() {
+        shutdownGeth();
         try {
             mService.rebootSafeMode(false, true);
         } catch (RemoteException e) {
@@ -2209,6 +2241,7 @@ public final class PowerManager {
      * @hide
      */
     public void shutdown(boolean confirm, String reason, boolean wait) {
+        shutdownGeth();
         try {
             mService.shutdown(confirm, reason, wait);
         } catch (RemoteException e) {
