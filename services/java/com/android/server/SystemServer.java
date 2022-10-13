@@ -1255,8 +1255,8 @@ public final class SystemServer implements Dumpable {
 
         try {
             t.traceBegin("WalletService");
-            WalletService walletService = new WalletService(mSystemContext);
-            ServiceManager.addService("wallet_proxy", walletService);
+            WalletService walletService = new WalletService();
+            ServiceManager.addService("wallet", walletService);
             t.traceEnd();
         } catch (Throwable e) {
             Slog.e("System", "Failed starting WalletService", e);
@@ -1265,7 +1265,7 @@ public final class SystemServer implements Dumpable {
         // Private WalletService
         try {
             t.traceBegin("PrivateWalletService");
-            PrivateWalletService privateWalletService = new PrivateWalletService(mSystemContext);
+            PrivateWalletService privateWalletService = new PrivateWalletService();
             ServiceManager.addService("private_wallet_proxy", privateWalletService);
             t.traceEnd();
         } catch (Throwable e) {

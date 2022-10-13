@@ -18,31 +18,16 @@ import org.web3j.crypto.WalletUtils;
 public class WalletService extends IWalletService.Stub {
     private static final String TAG = "WalletService";
     private static WalletService instance;
-    private final String walletPath;
-    private Context context;
 
     
-    public WalletService(Context context) {
+    public WalletService() {
         super();
         Log.v(TAG, "WalletService, onCreate");
-        walletPath = context.getFilesDir().getAbsolutePath();
     }
 
     public String createSession() {
         UUID uuid = UUID.randomUUID();
         return uuid.toString();
-    }
-
-    public void createWallet() {
-        try {
-            // TODO: Check if wallet exists already
-            String fileName = WalletUtils.generateNewWalletFile(
-            "password",
-            new File(walletPath+"/wallet_file.json"));
-            System.out.println(fileName);
-        }catch (Exception e) {
-            e.printStackTrace();
-        }
     }
 
     public boolean isWalletConnected(String session) {

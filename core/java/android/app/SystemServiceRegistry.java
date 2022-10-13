@@ -278,20 +278,6 @@ public final class SystemServiceRegistry {
                 return AccessibilityManager.getInstance(ctx);
             }});
 
-        // GethService
-        /**
-        registerService(Context.GETH_SERVICE, GethProxy.class,
-            new CachedServiceFetcher<GethProxy>() {
-            @Override
-            public GethProxy createService(ContextImpl ctx) {
-                return GethProxy.getGethProxy();
-            }});
-         
-        registerService("geth", GethProxy.class, new ServiceFetcher<GethProxy>() {
-            public GethProxy createService(ContextImpl ctx) {
-                return GethProxy.getGethProxy();
-            }});
-        */
         registerService("geth", GethProxy.class,
             new StaticServiceFetcher<GethProxy>() {
             @Override
@@ -299,7 +285,7 @@ public final class SystemServiceRegistry {
                 return GethProxy.getGethProxy();
             }});
         
-        registerService("wallet_proxy", WalletProxy.class,
+        registerService("wallet", WalletProxy.class,
             new CachedServiceFetcher<WalletProxy>() {
             @Override
             public WalletProxy createService(ContextImpl ctx) {

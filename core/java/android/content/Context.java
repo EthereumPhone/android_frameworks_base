@@ -550,8 +550,14 @@ public abstract class Context {
      * GethService String
      * @return
      */
-    public static final String GETH_SERVICE = "geth";
+     public static final String GETH_SERVICE = "geth";
 
+     /**
+     * WalletService String
+     * @return
+     */
+    public static final String WALLET_SERVICE = "wallet";
+    
     /**
      * Returns an AssetManager instance for the application's package.
      * <p>

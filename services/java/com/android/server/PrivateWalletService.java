@@ -4,7 +4,7 @@ import com.android.server.SystemService;
 import android.content.Context;
 import android.util.Log;
 import android.os.Environment;
-import android.os.IWalletService;
+import android.os.IPrivateWalletService;
 import java.io.File;
 import java.io.FileWriter;
 import java.util.Scanner;
@@ -19,13 +19,12 @@ public class PrivateWalletService extends IPrivateWalletService.Stub {
     private static final String TAG = "PrivateWalletService";
     private static WalletService instance;
     private final String walletPath;
-    private Context context;
 
     
-    public PrivateWalletService(Context context) {
+    public PrivateWalletService() {
         super();
         Log.v(TAG, "PrivateWalletService, onCreate");
-        walletPath = context.getFilesDir().getAbsolutePath();
+        walletPath = Environment.getDataDirectory().getAbsolutePath();
     }
 
     public void createWallet() {
