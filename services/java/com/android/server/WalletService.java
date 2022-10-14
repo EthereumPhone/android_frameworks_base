@@ -18,7 +18,7 @@ import org.web3j.crypto.WalletUtils;
 public class WalletService extends IWalletService.Stub {
     private static final String TAG = "WalletService";
     private static WalletService instance;
-
+    private String dataDir;
     
     public WalletService() {
         super();
