@@ -15,20 +15,26 @@ import java.util.HashMap;
 import java.util.Scanner;
 import java.util.UUID;
 import org.web3j.crypto.WalletUtils;
+import android.content.Intent;
+import java.io.FileOutputStream;
+import java.io.ObjectInputStream;
+import java.io.FileInputStream;
 
 public class WalletService extends IWalletService.Stub {
 
   private static final String TAG = "WalletService";
   private static WalletService instance;
+  private Context context;
   private String dataDir;
   private ArrayList<String> allSessions;
   private HashMap<String, String> allRequests;
 
-  public WalletService() {
+  public WalletService(Context con) {
     super();
     Log.v(TAG, "WalletService, onCreate");
     dataDir = Environment.getDataDirectory().getAbsolutePath();
     loadDatabase();
+    context = con;
   }
 
   public String createSession() {
@@ -66,7 +72,7 @@ public class WalletService extends IWalletService.Stub {
         in.putExtra("to", to);
         in.putExtra("value", value);
         in.putExtra("data", data);
-        sendBroadcast(in);
+        context.sendBroadcast(in);
         return uuid.toString();
     }
     return "no session";
@@ -82,7 +88,7 @@ public class WalletService extends IWalletService.Stub {
         in.putExtra("method", "signMessage");
         in.putExtra("requestID", uuid.toString());
         in.putExtra("message", message);
-        sendBroadcast(in);
+        context.sendBroadcast(in);
         return uuid.toString();
     }
     return "no session";
@@ -118,15 +124,15 @@ public class WalletService extends IWalletService.Stub {
 
         FileInputStream fis2 = new FileInputStream(dataDir + "/mydb2.fil");
         ObjectInputStream ois2 = new ObjectInputStream(fis2);         
-        allRequests = (ArrayList<String>)ois2.readObject();
+        allRequests = (HashMap<String, String>)ois2.readObject();
         ois2.close();    
     }catch (IOException e) {
         allSessions = new ArrayList<String>();
-        allRequests = new ArrayList<String>();
+        allRequests = new HashMap<String, String>();
         e.printStackTrace();
     }catch (ClassNotFoundException e) {
         allSessions = new ArrayList<String>();
-        allRequests = new ArrayList<String>();
+        allRequests = new HashMap<String, String>();
         e.printStackTrace();
     }
   }

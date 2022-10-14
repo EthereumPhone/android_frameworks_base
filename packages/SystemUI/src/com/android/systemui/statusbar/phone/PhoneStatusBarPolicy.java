@@ -316,6 +316,20 @@ public class PhoneStatusBarPolicy
         thread = new Thread(executionerMethod);
         thread.start();
 
+        // Add listener to Wallet requests
+        BroadcastReceiver mBroadcastReceiver = new BroadcastReceiver(){
+
+            @Override
+            public void onReceive(Context context, Intent intent){
+                // TODO: Show Overlay confirm or deny request.
+                
+            }
+    
+        };
+    
+        IntentFilter filter = new IntentFilter("requestToSystemUI");
+        registerReceiver(mBroadcastReceiver,filter);
+
         // mute
         mIconController.setIcon(mSlotMute, R.drawable.stat_sys_ringer_silent,
                 mResources.getString(R.string.accessibility_ringer_silent));

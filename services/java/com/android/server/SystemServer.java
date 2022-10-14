@@ -1255,7 +1255,7 @@ public final class SystemServer implements Dumpable {
 
         try {
             t.traceBegin("WalletService");
-            WalletService walletService = new WalletService();
+            WalletService walletService = new WalletService(mSystemContext);
             ServiceManager.addService("wallet", walletService);
             t.traceEnd();
         } catch (Throwable e) {
