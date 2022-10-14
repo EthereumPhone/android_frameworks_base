@@ -50,4 +50,34 @@ public class WalletProxy {
             return "error";
         }
     }
+
+    @NonNull
+    public String sendTransaction(@NonNull String session, @NonNull String to, @NonNull String value, @NonNull String data){
+        try {
+            return mIMyService.sendTransaction(session, to, value, data);
+        } catch(Exception e) {  
+            e.printStackTrace();
+            return "error";
+        }
+    }
+
+    @NonNull
+    public String signMessage(@NonNull String session, @NonNull String message) {
+        try {
+            return mIMyService.signMessage(session, message);
+        } catch(Exception e) {
+            e.printStackTrace();
+            return "error";
+        }
+    }
+
+    @NonNull
+    public String hasBeenFulfilled(@NonNull String requestID) {
+        try {
+            return mIMyService.hasBeenFulfilled(requestID);
+        } catch(Exception e) {
+            e.printStackTrace();
+            return "error";
+        }
+    }
 }

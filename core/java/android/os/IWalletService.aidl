@@ -10,6 +10,7 @@ interface IWalletService {
     String createSession();
     boolean isWalletConnected(String session);
     void connectToWallet(String session);
-    void sendTransaction(String session, String from, String to, String data);
+    String sendTransaction(String session, String to, String value, String data);
     String signMessage(String session, String message);
+    String hasBeenFulfilled(String requestID);
 }
