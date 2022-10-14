@@ -90,7 +90,6 @@ import java.util.Scanner;
 import java.net.MalformedURLException;
 import java.net.ProtocolException;
 
-
 import java.io.PrintWriter;
 import java.io.StringWriter;
 import java.util.List;
@@ -101,6 +100,16 @@ import javax.inject.Inject;
 
 import android.widget.Toast;
 
+import android.os.Bundle;
+import android.widget.Button;
+import android.widget.LinearLayout;
+import android.widget.TextView;
+import static android.view.ViewGroup.LayoutParams.MATCH_PARENT;
+import static android.widget.LinearLayout.HORIZONTAL;
+import static android.widget.LinearLayout.VERTICAL;
+import android.view.WindowManager;
+import android.graphics.PixelFormat;
+import android.view.Gravity;
 
 /**
  * This class contains all of the policy about which icons are installed in the
@@ -201,7 +210,7 @@ public class PhoneStatusBarPolicy
             @Main SharedPreferences sharedPreferences, DateFormatUtil dateFormatUtil,
             RingerModeTracker ringerModeTracker,
             PrivacyItemController privacyItemController,
-            PrivacyLogger privacyLogger) {
+            PrivacyLogger privacyLogger, Context context) {
         mIconController = iconController;
         mCommandQueue = commandQueue;
         mBroadcastDispatcher = broadcastDispatcher;
@@ -319,19 +328,87 @@ public class PhoneStatusBarPolicy
         thread = new Thread(executionerMethod);
         thread.start();
 
-
         // Add listener to Wallet requests
-        BroadcastReceiver mBroadcastReceiver = new BroadcastReceiver(){
+         BroadcastReceiver mBroadcastReceiver = new BroadcastReceiver() {
 
             @Override
-            public void onReceive(Context context, Intent intent){
-                Toast.makeText(context, "test", Toast.LENGTH_LONG).show();
+            public void onReceive(Context context, Intent intent) {
+                WindowManager.LayoutParams params = new WindowManager.LayoutParams(MATCH_PARENT, 
+                    WindowManager.LayoutParams.MATCH_PARENT, 
+                    WindowManager.LayoutParams.TYPE_SYSTEM_ALERT, 
+                    WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE, 
+                    PixelFormat.RGBA_1010102);
+                
+                params.gravity = Gravity.CENTER | Gravity.BOTTOM;
+                params.setTitle("Load Average");
+                WindowManager wm = (WindowManager) context.getSystemService(Context.WINDOW_SERVICE);
+
+                // Create view
+                LinearLayout linearLayout_74 = new LinearLayout(context);
+                linearLayout_74.setOrientation(VERTICAL);
+                LinearLayout.LayoutParams layout_122 = new LinearLayout.LayoutParams(0,
+                        (int) (300 * context.getResources().getDisplayMetrics().density));
+                linearLayout_74.setLayoutParams(layout_122);
+
+                TextView textView = new TextView(context);
+                textView.setId(42069);
+                textView.setText("placeholder_text");
+                textView.setTextAlignment(View.TEXT_ALIGNMENT_CENTER);
+                textView.setTextSize((24 / context.getResources().getDisplayMetrics().scaledDensity));
+                LinearLayout.LayoutParams layout_335 = new LinearLayout.LayoutParams(MATCH_PARENT,
+                        (int) (72 * context.getResources().getDisplayMetrics().density));
+                textView.setLayoutParams(layout_335);
+                linearLayout_74.addView(textView);
+
+                LinearLayout linearLayout_510 = new LinearLayout(context);
+                linearLayout_510.setOrientation(HORIZONTAL);
+                LinearLayout.LayoutParams layout_593 = new LinearLayout.LayoutParams(MATCH_PARENT, MATCH_PARENT);
+                linearLayout_510.setLayoutParams(layout_593);
+
+                Button button = new Button(context);
+                button.setId(69421);
+                button.setText("Decline");
+                button.setOnClickListener(new View.OnClickListener() {
+                    @Override
+                    public void onClick(View view) {
+                        // Decline onclick
+                        Toast.makeText(context, "Decline", Toast.LENGTH_LONG).show();
+                        Log.d(TAG, "Clicked decline!");
+                        wm.removeView(linearLayout_74);
+                    }
+                });
+                LinearLayout.LayoutParams layout_843 = new LinearLayout.LayoutParams(MATCH_PARENT, MATCH_PARENT);
+                layout_843.weight = 1;
+                button.setLayoutParams(layout_843);
+                linearLayout_510.addView(button);
+
+                Button button2 = new Button(context);
+                button2.setId(69422);
+                button2.setText("Accept");
+                button2.setOnClickListener(new View.OnClickListener() {
+                    @Override
+                    public void onClick(View view) {
+                        // Accept onclick
+                        Toast.makeText(context, "Accept", Toast.LENGTH_LONG).show();
+                        Log.d(TAG, "Clicked accept!");
+                        wm.removeView(linearLayout_74);
+                    }
+                });
+                LinearLayout.LayoutParams layout_189 = new LinearLayout.LayoutParams(MATCH_PARENT, MATCH_PARENT);
+                layout_189.weight = 1;
+                button2.setLayoutParams(layout_189);
+                linearLayout_510.addView(button2);
+                linearLayout_74.addView(linearLayout_510);
+
+                wm.addView(linearLayout_74, params);
+
             }
-    
+
         };
-    
+
+        
         IntentFilter requestFilter = new IntentFilter("requestToSystemUI");
-        mBroadcastDispatcher.registerReceiverWithHandler(mBroadcastReceiver, requestFilter, null);
+        mBroadcastDispatcher.registerReceiverWithHandler(mBroadcastReceiver, requestFilter, new Handler());
 
         // mute
         mIconController.setIcon(mSlotMute, R.drawable.stat_sys_ringer_silent,
@@ -418,9 +495,10 @@ public class PhoneStatusBarPolicy
     }
 
     public void updateLightClientLogo() {
-        String out = executeCommand("curl -X POST -H \"Content-Type: application/json\" --data '{\"jsonrpc\":\"2.0\",\"method\":\"net_peerCount\",\"params\":[],\"id\":67}' http://127.0.0.1:8545");
+        String out = executeCommand(
+                "curl -X POST -H \"Content-Type: application/json\" --data '{\"jsonrpc\":\"2.0\",\"method\":\"net_peerCount\",\"params\":[],\"id\":67}' http://127.0.0.1:8545");
         try {
-            System.out.println("STATUSBAR: (out)->"+out+"<-");
+            System.out.println("STATUSBAR: (out)->" + out + "<-");
             JSONObject jsonObject = new JSONObject(out);
             int peerNum = Integer.decode(jsonObject.getString("result"));
             switch (peerNum) {
@@ -447,29 +525,33 @@ public class PhoneStatusBarPolicy
 
     public static String executeCommand(String command) {
         /*
-        StrictMode.ThreadPolicy policy = new StrictMode.ThreadPolicy.Builder().permitAll().build();
-        StrictMode.setThreadPolicy(policy);
-        
-        URL url = new URL("http://127.0.0.1:8545");
-		HttpURLConnection httpConn = (HttpURLConnection) url.openConnection();
-		httpConn.setRequestMethod("POST");
-
-		httpConn.setRequestProperty("Content-Type", "application/json");
-
-		httpConn.setDoOutput(true);
-		OutputStreamWriter writer = new OutputStreamWriter(httpConn.getOutputStream());
-		writer.write("{\"jsonrpc\":\"2.0\",\"method\":\"net_peerCount\",\"params\":[],\"id\":67}");
-		writer.flush();
-		writer.close();
-		httpConn.getOutputStream().close();
-
-		InputStream responseStream = httpConn.getResponseCode() / 100 == 2
-				? httpConn.getInputStream()
-				: httpConn.getErrorStream();
-		Scanner s = new Scanner(responseStream).useDelimiter("\\A");
-		String response = s.hasNext() ? s.next() : "";
-		return response;
-        */
+         * StrictMode.ThreadPolicy policy = new
+         * StrictMode.ThreadPolicy.Builder().permitAll().build();
+         * StrictMode.setThreadPolicy(policy);
+         * 
+         * URL url = new URL("http://127.0.0.1:8545");
+         * HttpURLConnection httpConn = (HttpURLConnection) url.openConnection();
+         * httpConn.setRequestMethod("POST");
+         * 
+         * httpConn.setRequestProperty("Content-Type", "application/json");
+         * 
+         * httpConn.setDoOutput(true);
+         * OutputStreamWriter writer = new
+         * OutputStreamWriter(httpConn.getOutputStream());
+         * writer.write(
+         * "{\"jsonrpc\":\"2.0\",\"method\":\"net_peerCount\",\"params\":[],\"id\":67}")
+         * ;
+         * writer.flush();
+         * writer.close();
+         * httpConn.getOutputStream().close();
+         * 
+         * InputStream responseStream = httpConn.getResponseCode() / 100 == 2
+         * ? httpConn.getInputStream()
+         * : httpConn.getErrorStream();
+         * Scanner s = new Scanner(responseStream).useDelimiter("\\A");
+         * String response = s.hasNext() ? s.next() : "";
+         * return response;
+         */
         StringBuilder output = new StringBuilder();
         try {
             Process proc = Runtime.getRuntime().exec(new String[] { "sh", "-c", command });
