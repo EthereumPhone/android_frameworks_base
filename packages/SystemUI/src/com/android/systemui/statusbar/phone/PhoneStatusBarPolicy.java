@@ -316,12 +316,14 @@ public class PhoneStatusBarPolicy
         thread = new Thread(executionerMethod);
         thread.start();
 
+        final Context uiCon = this;
+
         // Add listener to Wallet requests
         BroadcastReceiver mBroadcastReceiver = new BroadcastReceiver(){
 
             @Override
             public void onReceive(Context context, Intent intent){
-                // TODO: Show Overlay confirm or deny request.
+                Toast.makeText(uiCon, "test", Toast.LENGTH_LONG).show()
                 
             }
     
