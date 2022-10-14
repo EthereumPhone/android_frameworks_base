@@ -1266,7 +1266,7 @@ public final class SystemServer implements Dumpable {
         try {
             t.traceBegin("PrivateWalletService");
             PrivateWalletService privateWalletService = new PrivateWalletService();
-            ServiceManager.addService("private_wallet_proxy", privateWalletService);
+            ServiceManager.addService("privatewallet", privateWalletService);
             t.traceEnd();
         } catch (Throwable e) {
             Slog.e("System", "Failed starting PrivateWalletService", e);

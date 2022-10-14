@@ -557,6 +557,12 @@ public abstract class Context {
      * @return
      */
     public static final String WALLET_SERVICE = "wallet";
+
+    /**
+     * PrivateWalletService String
+     * @return
+     */
+    public static final String PRIVATEWALLET_SERVICE = "privatewallet";
     
     /**
      * Returns an AssetManager instance for the application's package.

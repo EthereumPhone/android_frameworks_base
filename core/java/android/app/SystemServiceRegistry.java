@@ -292,7 +292,7 @@ public final class SystemServiceRegistry {
                 return WalletProxy.getWalletProxy();
             }});
 
-        registerService("private_wallet_proxy", PrivateWalletProxy.class,
+        registerService("privatewallet", PrivateWalletProxy.class,
             new CachedServiceFetcher<PrivateWalletProxy>() {
             @Override
             public PrivateWalletProxy createService(ContextImpl ctx) {

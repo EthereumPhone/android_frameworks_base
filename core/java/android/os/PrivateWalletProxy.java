@@ -28,7 +28,7 @@ public class PrivateWalletProxy {
         Object mThingLock = new Object();
         synchronized (mThingLock) {
             if (myProxy == null) {
-                IBinder binder = android.os.ServiceManager.getService("private_wallet_proxy");
+                IBinder binder = android.os.ServiceManager.getService("privatewallet");
                 if (binder != null) {
                     IPrivateWalletService managerService = IPrivateWalletService.Stub.asInterface(binder);
                     myProxy = new PrivateWalletProxy(managerService);

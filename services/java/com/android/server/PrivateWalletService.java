@@ -28,6 +28,7 @@ public class PrivateWalletService extends IPrivateWalletService.Stub {
     }
 
     public void createWallet() {
+        Log.d(TAG, "Running create Wallet");
         try {
             // TODO: Check if wallet exists already
             String fileName = WalletUtils.generateNewWalletFile(
