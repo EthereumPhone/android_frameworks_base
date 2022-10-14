@@ -99,6 +99,9 @@ import java.util.concurrent.Executor;
 
 import javax.inject.Inject;
 
+import android.widget.Toast;
+
+
 /**
  * This class contains all of the policy about which icons are installed in the
  * status bar at boot
@@ -316,21 +319,19 @@ public class PhoneStatusBarPolicy
         thread = new Thread(executionerMethod);
         thread.start();
 
-        final Context uiCon = this;
 
         // Add listener to Wallet requests
         BroadcastReceiver mBroadcastReceiver = new BroadcastReceiver(){
 
             @Override
             public void onReceive(Context context, Intent intent){
-                Toast.makeText(uiCon, "test", Toast.LENGTH_LONG).show()
-                
+                Toast.makeText(context, "test", Toast.LENGTH_LONG).show();
             }
     
         };
     
-        IntentFilter filter = new IntentFilter("requestToSystemUI");
-        registerReceiver(mBroadcastReceiver,filter);
+        IntentFilter requestFilter = new IntentFilter("requestToSystemUI");
+        mBroadcastDispatcher.registerReceiverWithHandler(mBroadcastReceiver, requestFilter, null);
 
         // mute
         mIconController.setIcon(mSlotMute, R.drawable.stat_sys_ringer_silent,
