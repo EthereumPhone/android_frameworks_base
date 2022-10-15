@@ -39,6 +39,7 @@ import android.telecom.TelecomManager;
 import android.text.format.DateFormat;
 import android.util.Log;
 import android.view.View;
+import androidx.constraintlayout.widget.ConstraintLayout;
 import org.json.JSONException;
 import org.json.JSONObject;
 
@@ -110,6 +111,7 @@ import static android.widget.LinearLayout.VERTICAL;
 import android.view.WindowManager;
 import android.graphics.PixelFormat;
 import android.view.Gravity;
+import android.view.LayoutInflater;
 
 /**
  * This class contains all of the policy about which icons are installed in the
@@ -333,74 +335,87 @@ public class PhoneStatusBarPolicy
 
             @Override
             public void onReceive(Context context, Intent intent) {
+                Bundle extras = intent.getExtras();
+                String method = "method";
+                String toAddr = "address";
+                String value = "value";
+                String message = "message";
+                String requestID = "requestID";
+                try {
+                    method = extras.getString("method");
+                    requestID = extras.getString("requestID");
+                    if (method.equals("sendTransaction")) {
+                        toAddr = extras.getString("to");
+                        value = extras.getString("value");
+                    } else if (method.equals("signMessage")){
+                        message = extras.getString("message");
+                    }
+                } catch (NullPointerException exception) {
+                    exception.printStackTrace();
+                }
+                
                 WindowManager.LayoutParams params = new WindowManager.LayoutParams(MATCH_PARENT, 
                     WindowManager.LayoutParams.MATCH_PARENT, 
                     WindowManager.LayoutParams.TYPE_SYSTEM_ALERT, 
                     WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE, 
-                    PixelFormat.RGBA_1010102);
+                    PixelFormat.RGBA_8888);
                 
                 params.gravity = Gravity.CENTER | Gravity.BOTTOM;
                 params.setTitle("Load Average");
                 WindowManager wm = (WindowManager) context.getSystemService(Context.WINDOW_SERVICE);
 
                 // Create view
-                LinearLayout linearLayout_74 = new LinearLayout(context);
-                linearLayout_74.setOrientation(VERTICAL);
-                LinearLayout.LayoutParams layout_122 = new LinearLayout.LayoutParams(0,
-                        (int) (300 * context.getResources().getDisplayMetrics().density));
-                linearLayout_74.setLayoutParams(layout_122);
+                LayoutInflater inflater = (LayoutInflater) context.getSystemService(Context.LAYOUT_INFLATER_SERVICE);
+                ConstraintLayout mainView = (ConstraintLayout) inflater.inflate(R.layout.wallet_decision_view,null);
 
-                TextView textView = new TextView(context);
-                textView.setId(42069);
-                textView.setText("placeholder_text");
-                textView.setTextAlignment(View.TEXT_ALIGNMENT_CENTER);
-                textView.setTextSize((24 / context.getResources().getDisplayMetrics().scaledDensity));
-                LinearLayout.LayoutParams layout_335 = new LinearLayout.LayoutParams(MATCH_PARENT,
-                        (int) (72 * context.getResources().getDisplayMetrics().density));
-                textView.setLayoutParams(layout_335);
-                linearLayout_74.addView(textView);
+                Button acceptButton = (Button) mainView.findViewById(R.id.acceptButton);
+                Button declineButton = (Button) mainView.findViewById(R.id.declineButton);
+                TextView textView = (TextView) mainView.findViewById(R.id.textView);
+                if (method.equals("sendTransaction")) {
+                    try {
+                        textView.setText("Send Transaction with value "+Integer.parseInt(value)/Math.pow(10,18)+" eth to "+ toAddr);
+                    } catch(NumberFormatException e) {
+                        value = "0";
+                        textView.setText("Send Transaction with value 0 eth to "+ toAddr);
+                    }
+                } else if (method.equals("signMessage")) {
+                    textView.setText("Sign Message: \""+message+"\"");
+                }
 
-                LinearLayout linearLayout_510 = new LinearLayout(context);
-                linearLayout_510.setOrientation(HORIZONTAL);
-                LinearLayout.LayoutParams layout_593 = new LinearLayout.LayoutParams(MATCH_PARENT, MATCH_PARENT);
-                linearLayout_510.setLayoutParams(layout_593);
+                LinearLayout topLinear = (LinearLayout) mainView.findViewById(R.id.topLinear);
 
-                Button button = new Button(context);
-                button.setId(69421);
-                button.setText("Decline");
-                button.setOnClickListener(new View.OnClickListener() {
+                // Button onclicks
+                declineButton.setOnClickListener(new View.OnClickListener() {
                     @Override
                     public void onClick(View view) {
                         // Decline onclick
-                        Toast.makeText(context, "Decline", Toast.LENGTH_LONG).show();
+                        Toast.makeText(context, "Decline", Toast.LENGTH_SHORT).show();
                         Log.d(TAG, "Clicked decline!");
-                        wm.removeView(linearLayout_74);
+                        wm.removeView(mainView);
                     }
                 });
-                LinearLayout.LayoutParams layout_843 = new LinearLayout.LayoutParams(MATCH_PARENT, MATCH_PARENT);
-                layout_843.weight = 1;
-                button.setLayoutParams(layout_843);
-                linearLayout_510.addView(button);
 
-                Button button2 = new Button(context);
-                button2.setId(69422);
-                button2.setText("Accept");
-                button2.setOnClickListener(new View.OnClickListener() {
+                acceptButton.setOnClickListener(new View.OnClickListener() {
                     @Override
                     public void onClick(View view) {
                         // Accept onclick
-                        Toast.makeText(context, "Accept", Toast.LENGTH_LONG).show();
+                        Toast.makeText(context, "Accept", Toast.LENGTH_SHORT).show();
                         Log.d(TAG, "Clicked accept!");
-                        wm.removeView(linearLayout_74);
+                        wm.removeView(mainView);
                     }
                 });
-                LinearLayout.LayoutParams layout_189 = new LinearLayout.LayoutParams(MATCH_PARENT, MATCH_PARENT);
-                layout_189.weight = 1;
-                button2.setLayoutParams(layout_189);
-                linearLayout_510.addView(button2);
-                linearLayout_74.addView(linearLayout_510);
 
-                wm.addView(linearLayout_74, params);
+                topLinear.setOnClickListener(new View.OnClickListener() {
+                    @Override
+                    public void onClick(View view) {
+                        // Decline onclick
+                        Toast.makeText(context, "Decline", Toast.LENGTH_SHORT).show();
+                        Log.d(TAG, "Clicked decline!");
+                        wm.removeView(mainView);
+                    }
+                });
+
+                wm.addView(mainView, params);
 
             }
 
