@@ -24,15 +24,18 @@
         android:orientation="vertical"
         app:layout_constraintBottom_toBottomOf="parent"
         app:layout_constraintEnd_toEndOf="parent"
-        app:layout_constraintStart_toStartOf="parent">
+        app:layout_constraintStart_toStartOf="parent"
+        android:background="#664091D0">
 
         <TextView
             android:id="@+id/textView"
             android:layout_width="match_parent"
-            android:layout_height="72dp"
+            android:layout_height="wrap_content"
             android:text="placeholder_text"
             android:textAlignment="center"
-            android:textSize="24sp" />
+            android:textColor="@color/black"
+            android:textSize="20sp"
+            android:paddingTop="15dp"/>
 
         <LinearLayout
             android:layout_width="match_parent"
@@ -47,7 +50,8 @@
                 android:layout_margin="10dp"
                 android:layout_weight="1"
                 android:text="Decline"
-                android:textColor="#0000FF" />
+                android:background="@color/purple_700"
+                android:textColor="#FFFFFF" />
 
             <Button
                 android:id="@+id/acceptButton"
@@ -56,7 +60,8 @@
                 android:layout_margin="10dp"
                 android:layout_weight="1"
                 android:text="Accept"
-                android:textColor="#0000FF" />
+                android:background="@color/purple_700"
+                android:textColor="#FFFFFF" />
         </LinearLayout>
     </LinearLayout>
 </androidx.constraintlayout.widget.ConstraintLayout>
