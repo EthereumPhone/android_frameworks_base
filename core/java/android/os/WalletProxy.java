@@ -80,4 +80,14 @@ public class WalletProxy {
             return "error";
         }
     }
+
+    @NonNull
+    public String getUserDecision() {
+        try {
+            return mIMyService.getUserDecision();
+        } catch(Exception e) {
+            e.printStackTrace();
+            return "error";
+        }
+    }
 }

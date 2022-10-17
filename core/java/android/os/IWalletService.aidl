@@ -13,4 +13,5 @@ interface IWalletService {
     String sendTransaction(String session, String to, String value, String data);
     String signMessage(String session, String message);
     String hasBeenFulfilled(String requestID);
+    String getUserDecision();
 }

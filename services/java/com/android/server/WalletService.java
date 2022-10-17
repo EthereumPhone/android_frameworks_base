@@ -55,41 +55,41 @@ public class WalletService extends IWalletService.Stub {
   }
 
   public String sendTransaction(
-    String session,
-    String to,
-    String value,
-    String data
-  ) {
+      String session,
+      String to,
+      String value,
+      String data) {
     Log.v(TAG, "sendTransaction, " + session);
     if (allSessions.contains(session)) {
-        UUID uuid = UUID.randomUUID();
-        allRequests.put(uuid.toString(), "notfulfilled");
-        saveDatabase();
-        // TODO: Send Broadcast to SystemUI
-        Intent in = new Intent("requestToSystemUI");
-        in.putExtra("method", "sendTransaction");
-        in.putExtra("requestID", uuid.toString());
-        in.putExtra("to", to);
-        in.putExtra("value", value);
-        in.putExtra("data", data);
-        context.sendBroadcast(in);
-        return uuid.toString();
+      UUID uuid = UUID.randomUUID();
+      allRequests.put(uuid.toString(), "notfulfilled");
+      saveDatabase();
+
+      Intent in = new Intent("requestToSystemUI");
+      in.putExtra("method", "sendTransaction");
+      in.putExtra("requestID", uuid.toString());
+      in.putExtra("to", to);
+      in.putExtra("value", value);
+      in.putExtra("data", data);
+      context.sendBroadcast(in);
+      return uuid.toString();
     }
     return "no session";
   }
+
   public String signMessage(String session, String message) {
     Log.v(TAG, "signMessage, " + session + ": " + message);
-    if (allSessions.contains(session)){
-        UUID uuid = UUID.randomUUID();
-        allRequests.put(uuid.toString(), "notfulfilled");
-        saveDatabase();
-        // TODO: Send Broadcast to SystemUI
-        Intent in = new Intent("requestToSystemUI");
-        in.putExtra("method", "signMessage");
-        in.putExtra("requestID", uuid.toString());
-        in.putExtra("message", message);
-        context.sendBroadcast(in);
-        return uuid.toString();
+    if (allSessions.contains(session)) {
+      UUID uuid = UUID.randomUUID();
+      allRequests.put(uuid.toString(), "notfulfilled");
+      saveDatabase();
+
+      Intent in = new Intent("requestToSystemUI");
+      in.putExtra("method", "signMessage");
+      in.putExtra("requestID", uuid.toString());
+      in.putExtra("message", message);
+      context.sendBroadcast(in);
+      return uuid.toString();
     }
     return "no session";
   }
@@ -116,26 +116,35 @@ public class WalletService extends IWalletService.Stub {
   }
 
   public void loadDatabase() {
-    try {           
-        FileInputStream fis = new FileInputStream(dataDir + "/mydb1.fil");
-        ObjectInputStream ois = new ObjectInputStream(fis);         
-        allSessions = (ArrayList<String>)ois.readObject();
-        ois.close();         
+    try {
+      FileInputStream fis = new FileInputStream(dataDir + "/mydb1.fil");
+      ObjectInputStream ois = new ObjectInputStream(fis);
+      allSessions = (ArrayList<String>) ois.readObject();
+      ois.close();
 
-        FileInputStream fis2 = new FileInputStream(dataDir + "/mydb2.fil");
-        ObjectInputStream ois2 = new ObjectInputStream(fis2);         
-        allRequests = (HashMap<String, String>)ois2.readObject();
-        ois2.close();    
-    }catch (IOException e) {
-        allSessions = new ArrayList<String>();
-        allRequests = new HashMap<String, String>();
-        e.printStackTrace();
-    }catch (ClassNotFoundException e) {
-        allSessions = new ArrayList<String>();
-        allRequests = new HashMap<String, String>();
-        e.printStackTrace();
+      FileInputStream fis2 = new FileInputStream(dataDir + "/mydb2.fil");
+      ObjectInputStream ois2 = new ObjectInputStream(fis2);
+      allRequests = (HashMap<String, String>) ois2.readObject();
+      ois2.close();
+    } catch (IOException e) {
+      allSessions = new ArrayList<String>();
+      allRequests = new HashMap<String, String>();
+      e.printStackTrace();
+    } catch (ClassNotFoundException e) {
+      allSessions = new ArrayList<String>();
+      allRequests = new HashMap<String, String>();
+      e.printStackTrace();
     }
   }
 
+  public String getUserDecision() {
+    UUID uuid = UUID.randomUUID();
+    Intent in = new Intent("requestToSystemUI");
+    allRequests.put(uuid.toString(), "notfulfilled");
+    in.putExtra("method", "getDecision");
+    in.putExtra("requestID", uuid.toString());
+    context.sendBroadcast(in);
+    saveDatabase();
+  }
 
 }

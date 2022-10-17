@@ -51,5 +51,13 @@ public class PrivateWalletProxy {
         }
     }
 
+    @NonNull
+    public void pushDecision(String requestId, String response) {
+        try {
+            mIMyService.pushDecision(requestId, response);
+        } catch(Exception e) {
+            e.printStackTrace();
+        }
+    }
    
 }

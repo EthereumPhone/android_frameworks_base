@@ -113,6 +113,12 @@ import android.graphics.PixelFormat;
 import android.view.Gravity;
 import android.view.LayoutInflater;
 
+import android.view.animation.Animation;
+import android.view.animation.Animation.AnimationListener;
+import android.view.animation.AnimationUtils;
+import android.view.animation.TranslateAnimation;
+import android.widget.RelativeLayout;
+
 /**
  * This class contains all of the policy about which icons are installed in the
  * status bar at boot
@@ -368,9 +374,9 @@ public class PhoneStatusBarPolicy
                 LayoutInflater inflater = (LayoutInflater) context.getSystemService(Context.LAYOUT_INFLATER_SERVICE);
                 ConstraintLayout mainView = (ConstraintLayout) inflater.inflate(R.layout.wallet_decision_view,null);
 
-                Button acceptButton = (Button) mainView.findViewById(R.id.acceptButton);
-                Button declineButton = (Button) mainView.findViewById(R.id.declineButton);
-                TextView textView = (TextView) mainView.findViewById(R.id.textView);
+                Button acceptButton = (Button) mainView.findViewById(R.id.systemwallet);
+                Button declineButton = (Button) mainView.findViewById(R.id.others);
+                TextView textView = (TextView) mainView.findViewById(R.id.choosemethod);
                 if (method.equals("sendTransaction")) {
                     try {
                         textView.setText("Send Transaction with value "+Integer.parseInt(value)/Math.pow(10,18)+" eth to "+ toAddr);
@@ -382,7 +388,6 @@ public class PhoneStatusBarPolicy
                     textView.setText("Sign Message: \""+message+"\"");
                 }
 
-                LinearLayout topLinear = (LinearLayout) mainView.findViewById(R.id.topLinear);
 
                 // Button onclicks
                 declineButton.setOnClickListener(new View.OnClickListener() {
@@ -405,17 +410,43 @@ public class PhoneStatusBarPolicy
                     }
                 });
 
-                topLinear.setOnClickListener(new View.OnClickListener() {
-                    @Override
-                    public void onClick(View view) {
-                        // Decline onclick
-                        Toast.makeText(context, "Decline", Toast.LENGTH_SHORT).show();
-                        Log.d(TAG, "Clicked decline!");
-                        wm.removeView(mainView);
-                    }
-                });
-
                 wm.addView(mainView, params);
+
+                Animation slide = null;
+                slide = new TranslateAnimation(Animation.RELATIVE_TO_SELF, 0.0f,
+                        Animation.RELATIVE_TO_SELF, 0.0f, Animation.RELATIVE_TO_SELF,
+                        0.0f, Animation.RELATIVE_TO_SELF, -5.0f);
+
+                slide.setDuration(400);
+                slide.setFillAfter(true);
+                slide.setFillEnabled(true);
+                mainView.startAnimation(slide);
+
+                slide.setAnimationListener(new AnimationListener() {
+
+                    @Override
+                    public void onAnimationStart(Animation animation) {
+
+                    }
+
+                    @Override
+                    public void onAnimationRepeat(Animation animation) {
+                    }
+
+                    @Override
+                    public void onAnimationEnd(Animation animation) {
+
+                        mainView.clearAnimation();
+
+                        RelativeLayout.LayoutParams lp = new RelativeLayout.LayoutParams(
+                            mainView.getWidth(), mainView.getHeight());
+                        // lp.setMargins(0, 0, 0, 0);
+                        lp.addRule(RelativeLayout.ALIGN_PARENT_TOP);
+                        mainView.setLayoutParams(lp);
+
+                    }
+
+                });
 
             }
 

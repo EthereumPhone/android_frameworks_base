@@ -8,4 +8,5 @@ package android.os;
 /**{@hide}*/
 interface IPrivateWalletService {
     void createWallet();
+    void pushDecision(String requestId, String response);
 }
