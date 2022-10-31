@@ -10,6 +10,7 @@ import java.io.FileNotFoundException;
 import java.io.FileWriter;
 import java.io.IOException;
 import java.io.ObjectOutputStream;
+import java.math.BigInteger;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.Scanner;
@@ -19,6 +20,7 @@ import android.content.Intent;
 import java.io.FileOutputStream;
 import java.io.ObjectInputStream;
 import java.io.FileInputStream;
+import java.io.EOFException;
 
 public class WalletService extends IWalletService.Stub {
 
@@ -33,8 +35,10 @@ public class WalletService extends IWalletService.Stub {
     super();
     Log.v(TAG, "WalletService, onCreate");
     dataDir = Environment.getDataDirectory().getAbsolutePath();
-    loadDatabase();
     context = con;
+    allSessions = new ArrayList<>();
+    allRequests = new HashMap<>();
+    saveDatabase();
   }
 
   public String createSession() {
@@ -58,7 +62,10 @@ public class WalletService extends IWalletService.Stub {
       String session,
       String to,
       String value,
-      String data) {
+      String data,
+      String nonce,
+      String gasPrice,
+      String gasAmount) {
     Log.v(TAG, "sendTransaction, " + session);
     if (allSessions.contains(session)) {
       UUID uuid = UUID.randomUUID();
@@ -71,6 +78,9 @@ public class WalletService extends IWalletService.Stub {
       in.putExtra("to", to);
       in.putExtra("value", value);
       in.putExtra("data", data);
+      in.putExtra("nonce", nonce);
+      in.putExtra("gasPrice", gasPrice);
+      in.putExtra("gasAmount", gasAmount);
       context.sendBroadcast(in);
       return uuid.toString();
     }
@@ -96,6 +106,9 @@ public class WalletService extends IWalletService.Stub {
 
   public String hasBeenFulfilled(String requestID) {
     loadDatabase();
+    if (allRequests.get(requestID) == null) {
+      return "notfulfilled";
+    }
     return allRequests.get(requestID);
   }
 
@@ -126,13 +139,10 @@ public class WalletService extends IWalletService.Stub {
       ObjectInputStream ois2 = new ObjectInputStream(fis2);
       allRequests = (HashMap<String, String>) ois2.readObject();
       ois2.close();
-    } catch (IOException e) {
+    } catch (Exception e) {
       allSessions = new ArrayList<String>();
       allRequests = new HashMap<String, String>();
-      e.printStackTrace();
-    } catch (ClassNotFoundException e) {
-      allSessions = new ArrayList<String>();
-      allRequests = new HashMap<String, String>();
+      saveDatabase();
       e.printStackTrace();
     }
   }
@@ -145,6 +155,18 @@ public class WalletService extends IWalletService.Stub {
     in.putExtra("requestID", uuid.toString());
     context.sendBroadcast(in);
     saveDatabase();
+    return uuid.toString();
+  }
+
+  public String getAddress(String session) {
+    UUID uuid = UUID.randomUUID();
+    Intent in = new Intent("requestToSystemUI");
+    allRequests.put(uuid.toString(), "notfulfilled");
+    in.putExtra("method", "getAddress");
+    in.putExtra("requestID", uuid.toString());
+    context.sendBroadcast(in);
+    saveDatabase();
+    return uuid.toString();
   }
 
 }

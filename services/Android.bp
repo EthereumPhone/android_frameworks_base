@@ -44,13 +44,103 @@ java_import {
     jars: ["crypto-4.8.8-android.jar"],
 }
 
+java_import {
+    name: "web3j-utils",
+    host_supported: true,
+    installable: false,
+    jars: ["utils-4.8.8-android.jar"],
+}
 
-//android_library_import {
-//    name: "jackson-databind",
-//    aars: ["jackson-databind-2.14.0-android.aar"],
-//    sdk_version: "current",
-//    min_sdk_version: "22", // optional
-//}
+java_import {
+    name: "jackson-databind-2.13.4.2",
+    host_supported: true,
+    installable: false,
+    jars: ["jackson-databind-2.13.4.2.jar"],
+}
+
+java_import {
+    name: "jackson-core-android-lib",
+    host_supported: true,
+    installable: false,
+    jars: ["jackson-core-2.13.4.jar"],
+}
+
+java_import {
+    name: "jackson-annotations-android-lib",
+    host_supported: true,
+    installable: false,
+    jars: ["jackson-annotations-2.13.4.jar"],
+}
+
+java_import {
+    name: "bcprov-android-lib",
+    host_supported: true,
+    installable: false,
+    jars: ["bcprov-jdk15on-1.68.jar"],
+}
+
+java_import {
+    name: "okhttp-android-lib",
+    host_supported: true,
+    installable: false,
+    jars: ["okhttp-4.10.0.jar"],
+}
+
+java_import {
+    name: "kotlin-android-lib",
+    host_supported: true,
+    installable: false,
+    jars: ["kotlin-stdlib-1.7.20.jar"],
+}
+
+java_import {
+    name: "slf4j-api-android-lib",
+    host_supported: true,
+    installable: false,
+    jars: ["slf4j-api-2.0.3.jar"],
+}
+
+java_import {
+    name: "okio-android-lib",
+    host_supported: true,
+    installable: false,
+    jars: ["okio-3.2.0.jar"],
+}
+
+java_import {
+    name: "okio-jvm-android-lib",
+    host_supported: true,
+    installable: false,
+    jars: ["okio-jvm-3.2.0.jar"],
+}
+
+java_import {
+    name: "reactive-streams-android-lib",
+    host_supported: true,
+    installable: false,
+    jars: ["reactive-streams-1.0.4.jar"],
+}
+
+java_import {
+    name: "rxjava-android-lib",
+    host_supported: true,
+    installable: false,
+    jars: ["rxjava-2.2.21.jar"],
+}
+
+java_import {
+    name: "web3j-rlp-android-lib",
+    host_supported: true,
+    installable: false,
+    jars: ["rlp-4.8.8-android.jar"],
+}
+
+java_import {
+    name: "bcprov-ext-android-lib",
+    host_supported: true,
+    installable: false,
+    jars: ["bcprov-ext-jdk15on-1.68.jar"],
+}
 
 filegroup {
     name: "services-main-sources",
@@ -157,7 +247,20 @@ java_library {
 	    "geth",
         "web3j-core",
         "web3j-crypto",
-    //    "jackson-databind",
+        "web3j-utils",
+        "jackson-databind-2.13.4.2",
+        "jackson-core-android-lib",
+        "jackson-annotations-android-lib",
+        "bcprov-android-lib",
+        "okhttp-android-lib",
+        "kotlin-android-lib",
+        "slf4j-api-android-lib",
+        "okio-android-lib",
+        "okio-jvm-android-lib",
+        "reactive-streams-android-lib",
+        "rxjava-android-lib",
+        "web3j-rlp-android-lib",
+        "bcprov-ext-android-lib",
     ],
 
     libs: [

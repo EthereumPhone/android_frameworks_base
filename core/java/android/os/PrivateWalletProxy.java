@@ -41,7 +41,6 @@ public class PrivateWalletProxy {
         
     }
 
-
     @NonNull
     public void createWallet() {
         try {
@@ -52,9 +51,36 @@ public class PrivateWalletProxy {
     }
 
     @NonNull
-    public void pushDecision(String requestId, String response) {
+    public void pushDecision(@NonNull String requestId, @NonNull String response) {
         try {
             mIMyService.pushDecision(requestId, response);
+        } catch(Exception e) {
+            e.printStackTrace();
+        }
+    }
+
+    @NonNull
+    public void sendTransaction(@NonNull String requestId, @NonNull String to, @NonNull String value, @NonNull String data, @NonNull String nonce, @NonNull String gasPrice, @NonNull String gasAmount) {
+        try {
+            mIMyService.sendTransaction(requestId, to, value, data, nonce, gasPrice, gasAmount);
+        } catch(Exception e) {
+            e.printStackTrace();
+        }
+    }
+
+    @NonNull
+    public void signMessage(@NonNull String requestId, @NonNull String message)  {
+        try {
+            mIMyService.signMessage(requestId, message);
+        } catch(Exception e) {
+            e.printStackTrace();
+        }
+    }
+
+    @NonNull
+    public void getAddress(@NonNull String requestId) {
+        try {
+            mIMyService.getAddress(requestId);
         } catch(Exception e) {
             e.printStackTrace();
         }

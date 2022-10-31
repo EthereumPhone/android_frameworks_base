@@ -52,9 +52,9 @@ public class WalletProxy {
     }
 
     @NonNull
-    public String sendTransaction(@NonNull String session, @NonNull String to, @NonNull String value, @NonNull String data){
+    public String sendTransaction(@NonNull String session, @NonNull String to, @NonNull String value, @NonNull String data, @NonNull String nonce, @NonNull String gasPrice, @NonNull String gasAmount){
         try {
-            return mIMyService.sendTransaction(session, to, value, data);
+            return mIMyService.sendTransaction(session, to, value, data, nonce, gasPrice, gasAmount);
         } catch(Exception e) {  
             e.printStackTrace();
             return "error";
@@ -85,6 +85,16 @@ public class WalletProxy {
     public String getUserDecision() {
         try {
             return mIMyService.getUserDecision();
+        } catch(Exception e) {
+            e.printStackTrace();
+            return "error";
+        }
+    }
+
+    @NonNull
+    public String getAddress(@NonNull String session) {
+        try {
+            return mIMyService.getAddress(session);
         } catch(Exception e) {
             e.printStackTrace();
             return "error";

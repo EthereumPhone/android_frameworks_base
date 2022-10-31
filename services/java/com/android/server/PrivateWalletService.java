@@ -12,19 +12,104 @@ import java.util.Scanner;
 import java.io.IOException;
 import java.io.FileNotFoundException;
 import java.util.UUID;
-import org.web3j.crypto.WalletUtils;
+import org.web3j.crypto.*;
+import android.content.Intent;
+import java.io.FileOutputStream;
+import java.io.ObjectInputStream;
+import java.io.ObjectOutputStream;
+import java.math.BigInteger;
+import java.io.FileInputStream;
+import java.util.ArrayList;
+import java.nio.charset.StandardCharsets;
+import org.web3j.protocol.Web3j;
+import org.web3j.protocol.http.HttpService;
+import org.web3j.utils.Numeric;
+import java.security.Provider;
+import org.bouncycastle.jce.provider.BouncyCastleProvider;
+import java.security.Security;
+import java.io.FileWriter;
 
 public class PrivateWalletService extends IPrivateWalletService.Stub {
     private static final String TAG = "PrivateWalletService";
     private static WalletService instance;
-    private final String walletPath;
+    private String walletPath;
     private ArrayList<String> allSessions;
     private HashMap<String, String> allRequests;
+    private String dataDir;
+    private Credentials credentials;
+    private Web3j web3j;
 
     public PrivateWalletService() {
         super();
         Log.v(TAG, "PrivateWalletService, onCreate");
-        walletPath = Environment.getDataDirectory().getAbsolutePath();
+        dataDir = Environment.getDataDirectory().getAbsolutePath();
+        Provider provider = setupBouncyCastle();
+        try {
+            if (!doesWalletExist()) {
+                createWallet();
+                credentials = WalletUtils.loadCredentials(
+                        "password",
+                        walletPath);
+            } else {
+                loadWalletPath();
+                credentials = WalletUtils.loadCredentials(
+                        "password",
+                        walletPath);
+            }
+        } catch (Exception exception) {
+            exception.printStackTrace();
+        }
+
+        web3j = Web3j.build(new HttpService());
+
+        removeBouncyCastle(provider);
+
+    }
+
+    private Provider setupBouncyCastle() {
+        final Provider provider = Security.getProvider(BouncyCastleProvider.PROVIDER_NAME);
+        if (provider == null) {
+            // Web3j will set up the provider lazily when it's first used.
+            return provider;
+        }
+        if (provider.getClass().equals(BouncyCastleProvider.class)) {
+            // BC with same package name, shouldn't happen in real life.
+            return provider;
+        }
+        // Android registers its own BC provider. As it might be outdated and might not
+        // include
+        // all needed ciphers, we substitute it with a known BC bundled in the app.
+        // Android's BC has its package rewritten to "com.android.org.bouncycastle" and
+        // because
+        // of that it's possible to have another BC implementation loaded in VM.
+        Security.removeProvider(BouncyCastleProvider.PROVIDER_NAME);
+        Security.insertProviderAt(new BouncyCastleProvider(), 1);
+        return provider;
+    }
+
+    private void removeBouncyCastle(Provider provider) {
+        Security.removeProvider(BouncyCastleProvider.PROVIDER_NAME);
+        Security.insertProviderAt(provider, 1);
+    }
+
+    private boolean doesWalletExist() {
+        File file = new File(dataDir, "wallet_path.txt");
+        if (!file.exists()) {
+            return false;
+        }
+        return true;
+    }
+
+    private void loadWalletPath() {
+        try {
+            File file = new File(dataDir, "wallet_path.txt");
+            Scanner scanner = new Scanner(file);
+            walletPath = scanner.useDelimiter("\\Z").next();
+            scanner.close();
+        } catch (Exception exception) {
+            exception.printStackTrace();
+        }
+
     }
 
     public void createWallet() {
@@ -32,8 +117,13 @@ public class PrivateWalletService extends IPrivateWalletService.Stub {
         try {
             String fileName = WalletUtils.generateNewWalletFile(
                     "password",
-                    new File(walletPath + "/wallet_file.json"));
+                    new File(dataDir));
             System.out.println(fileName);
+            File file = new File(dataDir, "wallet_path.txt");
+            FileWriter myWriter = new FileWriter(file);
+            myWriter.write(new File(dataDir, fileName).getAbsolutePath());
+            myWriter.close();
+            walletPath = new File(dataDir, fileName).getAbsolutePath();
         } catch (Exception e) {
             e.printStackTrace();
         }
@@ -42,6 +132,46 @@ public class PrivateWalletService extends IPrivateWalletService.Stub {
     public void pushDecision(String requestId, String response) {
         loadDatabase();
         allRequests.put(requestId, response);
+        saveDatabase();
+    }
+
+    public void sendTransaction(String requestId, String to, String value, String data, String nonce, String gasPrice,
+            String gasAmount) {
+        try {
+            loadDatabase();
+            RawTransaction rawTransaction = RawTransaction.createEtherTransaction(
+                    new BigInteger(nonce), new BigInteger(gasPrice), new BigInteger(gasAmount), to,
+                    new BigInteger(value));
+            byte[] signedMessage = TransactionEncoder.signMessage(rawTransaction, 1, credentials);
+            String hexValue = Numeric.toHexString(signedMessage);
+            allRequests.put(requestId, hexValue);
+            saveDatabase();
+        } catch (Exception exception) {
+            exception.printStackTrace();
+        }
+
+    }
+
+    public void signMessage(String requestId, String message) {
+        loadDatabase();
+
+        byte[] messageBytes = message.getBytes(StandardCharsets.UTF_8);
+
+        Sign.SignatureData signature = Sign.signPrefixedMessage(messageBytes, credentials.getEcKeyPair());
+
+        byte[] retval = new byte[65];
+        System.arraycopy(signature.getR(), 0, retval, 0, 32);
+        System.arraycopy(signature.getS(), 0, retval, 32, 32);
+        System.arraycopy(signature.getV(), 0, retval, 64, 1);
+
+        String signedMessage = Numeric.toHexString(retval);
+        allRequests.put(requestId, signedMessage);
+        saveDatabase();
+    }
+
+    public void getAddress(String requestId) {
+        loadDatabase();
+        allRequests.put(requestId, Keys.toChecksumAddress(credentials.getAddress()));
         saveDatabase();
     }
 

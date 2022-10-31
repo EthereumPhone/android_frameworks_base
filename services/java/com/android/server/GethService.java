@@ -30,7 +30,7 @@ public class GethService extends IGethService.Stub {
                 File file = new File(dataDir+"/currentStatus.txt");
                 file.createNewFile();
                 FileWriter myWriter = new FileWriter(dataDir+"/currentStatus.txt");
-                myWriter.write("true");
+                myWriter.write("false");
                 myWriter.close();
             } catch(IOException exception) {
                 exception.printStackTrace();

@@ -12740,6 +12740,10 @@ public class ActivityManagerService extends IActivityManager.Stub
             // we've relaxed, so it's fine for system internals to send.
             return;
         }
+        if (action.equals("requestToSystemUI")) {
+            // Ignore WalletService
+            return;
+        }
 
         // This broadcast may be a problem...  but there are often system components that
         // want to send an internal broadcast to themselves, which is annoying to have to

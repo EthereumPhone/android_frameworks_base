@@ -5,23 +5,67 @@
 
     <androidx.constraintlayout.widget.ConstraintLayout android:id="@+id/constraintLayout" android:layout_width="match_parent" android:layout_height="432dp" android:background="@drawable/rounded_corners_dialog" android:elevation="10dp" app:layout_constraintBottom_toBottomOf="parent" app:layout_constraintEnd_toEndOf="parent" app:layout_constraintHorizontal_bias="0.0" app:layout_constraintStart_toStartOf="parent">
 
-        <TextView android:id="@+id/choose" android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_marginTop="32dp" android:fontFamily="sans-serif-medium" android:text="Transaction" android:textColor="@color/ethOS_white" android:textSize="24sp" app:layout_constraintEnd_toEndOf="parent" app:layout_constraintHorizontal_bias="0.498" app:layout_constraintStart_toStartOf="parent" app:layout_constraintTop_toTopOf="parent" />
+        <TextView
+            android:id="@+id/choose"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="32dp"
+            android:fontFamily="sans-serif-medium"
+            android:text="Sign message"
+            android:textColor="@color/ethOS_white"
+            android:textSize="24sp"
+            app:layout_constraintEnd_toEndOf="parent"
+            app:layout_constraintHorizontal_bias="0.498"
+            app:layout_constraintStart_toStartOf="parent"
+            app:layout_constraintTop_toTopOf="parent" />
 
-        <TextView android:id="@+id/choosemethod" android:layout_width="wrap_content" android:layout_height="wrap_content" android:fontFamily="sans-serif-light" android:text="Sign message" android:textColor="@color/ethOS_gray" android:textSize="12sp" app:layout_constraintEnd_toEndOf="parent" app:layout_constraintStart_toStartOf="parent" app:layout_constraintTop_toBottomOf="@+id/choose" />
+        <Button
+            android:id="@+id/acceptbtn"
+            android:layout_width="0dp"
+            android:layout_height="50dp"
+            android:layout_marginBottom="16dp"
+            android:background="@drawable/rounded_corners_primary"
+            android:text="Accept"
+            android:textColor="@color/ethOS_white"
+            app:layout_constraintBottom_toBottomOf="parent"
+            app:layout_constraintEnd_toStartOf="@+id/guideline3"
+            app:layout_constraintStart_toStartOf="@+id/guideline" />
 
-        <Button android:id="@+id/acceptbtn" android:layout_width="0dp" android:layout_height="50dp" android:layout_marginBottom="16dp" android:background="@drawable/rounded_corners_primary" android:text="Accept" android:textColor="@color/ethOS_white" app:layout_constraintBottom_toBottomOf="parent" app:layout_constraintEnd_toStartOf="@+id/guideline3" app:layout_constraintStart_toStartOf="@+id/guideline" />
+        <Button
+            android:id="@+id/declinebtn"
+            android:layout_width="0dp"
+            android:layout_height="50dp"
+            android:background="@drawable/rounded_corners_secondary"
+            android:text="Decline"
+            android:textColor="@color/ethOS_blue"
+            app:layout_constraintBaseline_toBaselineOf="@+id/acceptbtn"
+            app:layout_constraintEnd_toStartOf="@+id/guideline2"
+            app:layout_constraintStart_toStartOf="@+id/guideline4" />
 
-        <Button android:id="@+id/declinebtn" android:layout_width="0dp" android:layout_height="50dp" android:background="@drawable/rounded_corners_secondary" android:text="Decline" android:textColor="@color/ethOS_blue" app:layout_constraintBaseline_toBaselineOf="@+id/acceptbtn" app:layout_constraintEnd_toStartOf="@+id/guideline2" app:layout_constraintStart_toStartOf="@+id/guideline4" />
+        <TextView
+            android:id="@+id/messagetitle"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="16dp"
+            android:fontFamily="sans-serif-light"
+            android:text="Message"
+            android:textColor="@color/ethOS_gray"
+            android:textSize="24sp"
+            app:layout_constraintStart_toStartOf="@+id/guideline"
+            app:layout_constraintTop_toBottomOf="@+id/choose" />
 
-        <TextView android:id="@+id/wallet1" android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_marginTop="32dp" android:layout_marginEnd="16dp" android:fontFamily="sans-serif-light" android:text="0xFffdea860..." android:textColor="@color/ethOS_gray" app:layout_constraintEnd_toStartOf="@+id/imageView" app:layout_constraintTop_toBottomOf="@+id/choosemethod" />
-
-        <ImageView android:id="@+id/imageView" android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_marginTop="32dp" app:layout_constraintEnd_toEndOf="parent" app:layout_constraintHorizontal_bias="0.5" app:layout_constraintStart_toStartOf="parent" app:layout_constraintTop_toBottomOf="@+id/choosemethod" app:srcCompat="@drawable/transferimg" />
-
-        <TextView android:id="@+id/wallet2" android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_marginStart="16dp" android:layout_marginTop="32dp" android:fontFamily="sans-serif-light" android:text="0x95abDa53..." android:textColor="@color/ethOS_gray" app:layout_constraintStart_toEndOf="@+id/imageView" app:layout_constraintTop_toBottomOf="@+id/choosemethod" />
-
-        <TextView android:id="@+id/messagetitle" android:layout_width="wrap_content" android:layout_height="wrap_content" android:fontFamily="sans-serif-light" android:text="Message" android:textColor="@color/ethOS_gray" android:textSize="12sp" app:layout_constraintBottom_toTopOf="@+id/totaltitle" app:layout_constraintStart_toStartOf="@+id/guideline" app:layout_constraintTop_toBottomOf="@+id/wallet1" />
-
-        <TextView android:id="@+id/message" android:layout_width="0dp" android:layout_height="wrap_content" android:layout_marginTop="8dp" android:text="0x95abDa53Bc5E9fBBDce34603614018d32CED219e " android:textAlignment="viewStart" android:textColor="@color/ethOS_white" android:textSize="12sp" app:layout_constraintEnd_toStartOf="@+id/guideline2" app:layout_constraintStart_toStartOf="@+id/messagetitle" app:layout_constraintTop_toBottomOf="@+id/messagetitle" />
+        <TextView
+            android:id="@+id/message"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:text="0x95abDa53Bc5E9fBBDce34603614018d32CED219e "
+            android:textAlignment="viewStart"
+            android:textColor="@color/ethOS_white"
+            android:textSize="14sp"
+            app:layout_constraintEnd_toStartOf="@+id/guideline2"
+            app:layout_constraintStart_toStartOf="@+id/messagetitle"
+            app:layout_constraintTop_toBottomOf="@+id/messagetitle" />
 
         <androidx.constraintlayout.widget.Guideline android:id="@+id/guideline" android:layout_width="wrap_content" android:layout_height="wrap_content" android:orientation="vertical" app:layout_constraintGuide_begin="32dp" />
 
@@ -30,12 +74,6 @@
         <androidx.constraintlayout.widget.Guideline android:id="@+id/guideline4" android:layout_width="wrap_content" android:layout_height="wrap_content" android:orientation="vertical" app:layout_constraintGuide_end="195dp" />
 
         <androidx.constraintlayout.widget.Guideline android:id="@+id/guideline2" android:layout_width="wrap_content" android:layout_height="wrap_content" android:orientation="vertical" app:layout_constraintGuide_end="32dp" />
-
-        <TextView android:id="@+id/totaltitle" android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_marginBottom="8dp" android:fontFamily="sans-serif-light" android:text="Total" android:textColor="@color/ethOS_gray" android:textSize="12sp" app:layout_constraintBottom_toTopOf="@+id/ethamount_sign" app:layout_constraintStart_toStartOf="@+id/guideline" />
-
-        <TextView android:id="@+id/ethamount_sign" android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_marginBottom="32dp" android:text="0.25002" android:textColor="@color/ethOS_white" android:textSize="32sp" app:layout_constraintBottom_toTopOf="@+id/acceptbtn" app:layout_constraintStart_toStartOf="@+id/guideline" />
-
-        <TextView android:id="@+id/textView13" android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_marginStart="4dp" android:text="ETH" android:textColor="@color/ethOS_white" app:layout_constraintBaseline_toBaselineOf="@+id/ethamount_sign" app:layout_constraintStart_toEndOf="@+id/ethamount_sign" />
 
     </androidx.constraintlayout.widget.ConstraintLayout>
 

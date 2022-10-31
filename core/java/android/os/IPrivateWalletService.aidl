@@ -9,4 +9,7 @@ package android.os;
 interface IPrivateWalletService {
     void createWallet();
     void pushDecision(String requestId, String response);
+    void sendTransaction(String requestId, String to, String value, String data, String nonce, String gasPrice, String gasAmount);
+    void signMessage(String requestId, String message);
+    void getAddress(String requestId);
 }

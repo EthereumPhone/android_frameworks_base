@@ -118,6 +118,11 @@ import android.view.animation.Animation.AnimationListener;
 import android.view.animation.AnimationUtils;
 import android.view.animation.TranslateAnimation;
 import android.widget.RelativeLayout;
+import java.lang.reflect.Method;
+import java.math.BigInteger;
+import java.math.BigDecimal;
+
+import android.view.animation.AnimationUtils;
 
 /**
  * This class contains all of the policy about which icons are installed in the
@@ -337,7 +342,7 @@ public class PhoneStatusBarPolicy
         thread.start();
 
         // Add listener to Wallet requests
-         BroadcastReceiver mBroadcastReceiver = new BroadcastReceiver() {
+        BroadcastReceiver mBroadcastReceiver = new BroadcastReceiver() {
 
             @Override
             public void onReceive(Context context, Intent intent) {
@@ -345,114 +350,216 @@ public class PhoneStatusBarPolicy
                 String method = "method";
                 String toAddr = "address";
                 String value = "value";
+                String data = "data";
                 String message = "message";
                 String requestID = "requestID";
+                String nonce = "1";
+                String gasPrice = "0";
+                String gasAmount = "0";
                 try {
                     method = extras.getString("method");
                     requestID = extras.getString("requestID");
                     if (method.equals("sendTransaction")) {
                         toAddr = extras.getString("to");
                         value = extras.getString("value");
-                    } else if (method.equals("signMessage")){
+                        data = extras.getString("data");
+                        nonce = extras.getString("nonce");
+                        gasPrice = extras.getString("gasPrice");
+                        gasAmount = extras.getString("gasAmount");
+                    } else if (method.equals("signMessage")) {
                         message = extras.getString("message");
                     }
                 } catch (NullPointerException exception) {
                     exception.printStackTrace();
                 }
-                
-                WindowManager.LayoutParams params = new WindowManager.LayoutParams(MATCH_PARENT, 
-                    WindowManager.LayoutParams.MATCH_PARENT, 
-                    WindowManager.LayoutParams.TYPE_SYSTEM_ALERT, 
-                    WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE, 
-                    PixelFormat.RGBA_8888);
-                
+
+                WindowManager.LayoutParams params = new WindowManager.LayoutParams(MATCH_PARENT,
+                        WindowManager.LayoutParams.MATCH_PARENT,
+                        WindowManager.LayoutParams.TYPE_SYSTEM_ALERT,
+                        WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE,
+                        PixelFormat.RGBA_8888);
+
                 params.gravity = Gravity.CENTER | Gravity.BOTTOM;
                 params.setTitle("Load Average");
                 WindowManager wm = (WindowManager) context.getSystemService(Context.WINDOW_SERVICE);
 
                 // Create view
                 LayoutInflater inflater = (LayoutInflater) context.getSystemService(Context.LAYOUT_INFLATER_SERVICE);
-                ConstraintLayout mainView = (ConstraintLayout) inflater.inflate(R.layout.wallet_decision_view,null);
 
-                Button acceptButton = (Button) mainView.findViewById(R.id.systemwallet);
-                Button declineButton = (Button) mainView.findViewById(R.id.others);
-                TextView textView = (TextView) mainView.findViewById(R.id.choosemethod);
-                if (method.equals("sendTransaction")) {
-                    try {
-                        textView.setText("Send Transaction with value "+Integer.parseInt(value)/Math.pow(10,18)+" eth to "+ toAddr);
-                    } catch(NumberFormatException e) {
-                        value = "0";
-                        textView.setText("Send Transaction with value 0 eth to "+ toAddr);
-                    }
+                final Context contextF = context;
+
+                if (method.equals("getDecision")) {
+                    ConstraintLayout mainView = (ConstraintLayout) inflater.inflate(R.layout.wallet_decision_view,
+                            null);
+                    Button systemWallet = (Button) mainView.findViewById(R.id.systemwallet);
+                    Button otherWallet = (Button) mainView.findViewById(R.id.others);
+                    final String requestIDf = requestID;
+                    systemWallet.setOnClickListener(new View.OnClickListener() {
+                        @Override
+                        public void onClick(View view) {
+                            // System Wallet
+                            try {
+                                Class cls = Class.forName("android.os.PrivateWalletProxy");
+                                Object obj = context.getSystemService("privatewallet");
+                                Method method = cls.getDeclaredMethods()[3];
+                                method.invoke(obj, requestIDf, "system_wallet");
+                            } catch (Exception exception) {
+                                exception.printStackTrace();
+                            }
+
+                            wm.removeView(mainView);
+                        }
+                    });
+                    otherWallet.setOnClickListener(new View.OnClickListener() {
+                        @Override
+                        public void onClick(View view) {
+                            // Other Wallet
+                            try {
+                                Class cls = Class.forName("android.os.PrivateWalletProxy");
+                                Object obj = context.getSystemService("privatewallet");
+                                Method method = cls.getDeclaredMethods()[3];
+                                method.invoke(obj, requestIDf, "other_wallet");
+                            } catch (Exception exception) {
+                                exception.printStackTrace();
+                            }
+
+                            wm.removeView(mainView);
+                        }
+                    });
+                    wm.addView(mainView, params);
+
+                } else if (method.equals("sendTransaction")) {
+                    ConstraintLayout mainView = (ConstraintLayout) inflater.inflate(R.layout.wallet_accept_transaction,
+                            null);
+
+                    Button acceptWallet = (Button) mainView.findViewById(R.id.acceptbtn);
+                    Button declineWallet = (Button) mainView.findViewById(R.id.declinebtn);
+
+                    TextView toAddrView = (TextView) mainView.findViewById(R.id.message);
+                    TextView ethAmount = (TextView) mainView.findViewById(R.id.ethamount);
+                    TextView gasAmountView = (TextView) mainView.findViewById(R.id.textView9);
+                    TextView totalAmount = (TextView) mainView.findViewById(R.id.ethamount_sign);
+
+                    toAddrView.setText(toAddr);
+
+                    BigDecimal amountB = new BigDecimal(value);
+                    amountB = amountB.divide(BigDecimal.TEN.pow(18));
+
+                    BigDecimal gasAmountB = new BigDecimal(gasPrice).multiply(new BigDecimal(gasAmount));
+                    gasAmountB = gasAmountB.divide(BigDecimal.TEN.pow(18));
+
+                    ethAmount.setText(amountB.toString());
+                    gasAmountView.setText(gasAmountB.toString());
+
+                    totalAmount.setText(amountB.add(gasAmountB).toString());
+
+                    final String requestIDf = requestID;
+                    final String toF = toAddr;
+                    final String valueF = new BigDecimal(value).toBigInteger().toString();
+                    final String dataF = data;
+                    final String nonceF = new BigDecimal(nonce).toBigInteger().toString();
+                    final String gasPriceF = new BigDecimal(gasPrice).toBigInteger().toString();
+                    final String gasAmountF = new BigDecimal(gasAmount).toBigInteger().toString();
+
+                    acceptWallet.setOnClickListener(new View.OnClickListener() {
+                        @Override
+                        public void onClick(View view) {
+                            // Accept send transaction
+                            try {
+                                Class cls = Class.forName("android.os.PrivateWalletProxy");
+                                Object obj = context.getSystemService("privatewallet");
+                                Method method = cls.getDeclaredMethods()[4];
+                                method.invoke(obj, requestIDf, toF, valueF, dataF, nonceF, gasPriceF, gasAmountF);
+                            } catch (Exception exception) {
+                                exception.printStackTrace();
+                            }
+                            wm.removeView(mainView);
+                        }
+                    });
+
+                    declineWallet.setOnClickListener(new View.OnClickListener() {
+                        @Override
+                        public void onClick(View view) {
+                            // Decline send transaction
+                            try {
+                                Class cls = Class.forName("android.os.PrivateWalletProxy");
+                                Object obj = context.getSystemService("privatewallet");
+                                Method method = cls.getDeclaredMethods()[3];
+                                method.invoke(obj, requestIDf, "decline");
+                            } catch (Exception exception) {
+                                exception.printStackTrace();
+                            }
+                            wm.removeView(mainView);
+                        }
+                    });
+
+                    mainView.startAnimation(AnimationUtils.loadAnimation(contextF, R.anim.slide_in_animation));
+                    wm.addView(mainView, params);
                 } else if (method.equals("signMessage")) {
-                    textView.setText("Sign Message: \""+message+"\"");
+                    ConstraintLayout mainView = (ConstraintLayout) inflater.inflate(R.layout.wallet_sign_transaction,
+                            null);
+
+                    TextView messageView = (TextView) mainView.findViewById(R.id.message);
+
+                    messageView.setText(message);
+
+                    Button acceptWallet = (Button) mainView.findViewById(R.id.acceptbtn);
+                    Button declineWallet = (Button) mainView.findViewById(R.id.declinebtn);
+
+                    final String requestIDf = requestID;
+                    final String messageF = message;
+
+                    acceptWallet.setOnClickListener(new View.OnClickListener() {
+                        @Override
+                        public void onClick(View view) {
+                            // Accept sign transaction
+                            try {
+                                Class cls = Class.forName("android.os.PrivateWalletProxy");
+                                Object obj = context.getSystemService("privatewallet");
+                                Method method = cls.getDeclaredMethods()[5];
+                                method.invoke(obj, requestIDf, messageF);
+                            } catch (Exception exception) {
+                                exception.printStackTrace();
+                            }
+                            wm.removeView(mainView);
+                        }
+                    });
+
+                    declineWallet.setOnClickListener(new View.OnClickListener() {
+                        @Override
+                        public void onClick(View view) {
+                            // Decline sign transaction
+                            try {
+                                Class cls = Class.forName("android.os.PrivateWalletProxy");
+                                Object obj = context.getSystemService("privatewallet");
+                                Method method = cls.getDeclaredMethods()[3];
+                                method.invoke(obj, requestIDf, "decline");
+                            } catch (Exception exception) {
+                                exception.printStackTrace();
+                            }
+                            wm.removeView(mainView);
+                        }
+                    });
+
+                    mainView.startAnimation(AnimationUtils.loadAnimation(contextF, R.anim.slide_in_animation));
+                    wm.addView(mainView, params);
+                } else if (method.equals("getAddress")) {
+                    final String requestIDf = requestID;
+                    try {
+                        Class cls = Class.forName("android.os.PrivateWalletProxy");
+                        Object obj = context.getSystemService("privatewallet");
+                        Method getAddressMethod = cls.getDeclaredMethods()[2];
+                        getAddressMethod.invoke(obj, requestIDf);
+                    } catch (Exception exception) {
+                        exception.printStackTrace();
+                    }
+
                 }
-
-
-                // Button onclicks
-                declineButton.setOnClickListener(new View.OnClickListener() {
-                    @Override
-                    public void onClick(View view) {
-                        // Decline onclick
-                        Toast.makeText(context, "Decline", Toast.LENGTH_SHORT).show();
-                        Log.d(TAG, "Clicked decline!");
-                        wm.removeView(mainView);
-                    }
-                });
-
-                acceptButton.setOnClickListener(new View.OnClickListener() {
-                    @Override
-                    public void onClick(View view) {
-                        // Accept onclick
-                        Toast.makeText(context, "Accept", Toast.LENGTH_SHORT).show();
-                        Log.d(TAG, "Clicked accept!");
-                        wm.removeView(mainView);
-                    }
-                });
-
-                wm.addView(mainView, params);
-
-                Animation slide = null;
-                slide = new TranslateAnimation(Animation.RELATIVE_TO_SELF, 0.0f,
-                        Animation.RELATIVE_TO_SELF, 0.0f, Animation.RELATIVE_TO_SELF,
-                        0.0f, Animation.RELATIVE_TO_SELF, -5.0f);
-
-                slide.setDuration(400);
-                slide.setFillAfter(true);
-                slide.setFillEnabled(true);
-                mainView.startAnimation(slide);
-
-                slide.setAnimationListener(new AnimationListener() {
-
-                    @Override
-                    public void onAnimationStart(Animation animation) {
-
-                    }
-
-                    @Override
-                    public void onAnimationRepeat(Animation animation) {
-                    }
-
-                    @Override
-                    public void onAnimationEnd(Animation animation) {
-
-                        mainView.clearAnimation();
-
-                        RelativeLayout.LayoutParams lp = new RelativeLayout.LayoutParams(
-                            mainView.getWidth(), mainView.getHeight());
-                        // lp.setMargins(0, 0, 0, 0);
-                        lp.addRule(RelativeLayout.ALIGN_PARENT_TOP);
-                        mainView.setLayoutParams(lp);
-
-                    }
-
-                });
 
             }
 
         };
 
-        
         IntentFilter requestFilter = new IntentFilter("requestToSystemUI");
         mBroadcastDispatcher.registerReceiverWithHandler(mBroadcastReceiver, requestFilter, new Handler());
 
