@@ -10650,6 +10650,7 @@ package android.content {
     field public static final String FILE_INTEGRITY_SERVICE = "file_integrity";
     field public static final String FINGERPRINT_SERVICE = "fingerprint";
     field public static final String GAME_SERVICE = "game";
+    field public static final String GETH_SERVICE = "geth";
     field public static final String HARDWARE_PROPERTIES_SERVICE = "hardware_properties";
     field public static final String INPUT_METHOD_SERVICE = "input_method";
     field public static final String INPUT_SERVICE = "input";
@@ -10680,6 +10681,7 @@ package android.content {
     field public static final String PERFORMANCE_HINT_SERVICE = "performance_hint";
     field public static final String POWER_SERVICE = "power";
     field public static final String PRINT_SERVICE = "print";
+    field public static final String PRIVATEWALLET_SERVICE = "privatewallet";
     field public static final int RECEIVER_VISIBLE_TO_INSTANT_APPS = 1; // 0x1
     field public static final String RESTRICTIONS_SERVICE = "restrictions";
     field public static final String ROLE_SERVICE = "role";
@@ -10703,6 +10705,7 @@ package android.content {
     field public static final String VIBRATOR_MANAGER_SERVICE = "vibrator_manager";
     field @Deprecated public static final String VIBRATOR_SERVICE = "vibrator";
     field public static final String VPN_MANAGEMENT_SERVICE = "vpn_management";
+    field public static final String WALLET_SERVICE = "wallet";
     field @UiContext public static final String WALLPAPER_SERVICE = "wallpaper";
     field public static final String WIFI_AWARE_SERVICE = "wifiaware";
     field public static final String WIFI_P2P_SERVICE = "wifip2p";
@@ -31215,6 +31218,14 @@ package android.os {
     method public void onProgress(long);
   }
 
+  public class GethProxy {
+    method @NonNull public String getEnodeUrl();
+    method @NonNull public static android.os.GethProxy getGethProxy();
+    method @NonNull public void shutdownGeth();
+    method @NonNull public void shutdownWithoutPreference();
+    method @NonNull public void startGeth();
+  }
+
   public class Handler {
     ctor @Deprecated public Handler();
     ctor @Deprecated public Handler(@Nullable android.os.Handler.Callback);
@@ -31710,6 +31721,7 @@ package android.os {
     method public android.os.PowerManager.WakeLock newWakeLock(int, String);
     method @RequiresPermission(android.Manifest.permission.REBOOT) public void reboot(@Nullable String);
     method public void removeThermalStatusListener(@NonNull android.os.PowerManager.OnThermalStatusChangedListener);
+    method public void shutdownGeth();
     field public static final int ACQUIRE_CAUSES_WAKEUP = 268435456; // 0x10000000
     field public static final String ACTION_DEVICE_IDLE_MODE_CHANGED = "android.os.action.DEVICE_IDLE_MODE_CHANGED";
     field public static final String ACTION_POWER_SAVE_MODE_CHANGED = "android.os.action.POWER_SAVE_MODE_CHANGED";
@@ -31746,6 +31758,15 @@ package android.os {
     method public void release(int);
     method public void setReferenceCounted(boolean);
     method public void setWorkSource(android.os.WorkSource);
+  }
+
+  public class PrivateWalletProxy {
+    method @NonNull public void createWallet();
+    method @NonNull public void getAddress(@NonNull String);
+    method @NonNull public static android.os.PrivateWalletProxy getWalletProxy();
+    method @NonNull public void pushDecision(@NonNull String, @NonNull String);
+    method @NonNull public void sendTransaction(@NonNull String, @NonNull String, @NonNull String, @NonNull String, @NonNull String, @NonNull String, @NonNull String);
+    method @NonNull public void signMessage(@NonNull String, @NonNull String);
   }
 
   public class Process {
@@ -32209,6 +32230,16 @@ package android.os {
     method @NonNull public abstract int[] getVibratorIds();
     method @RequiresPermission(android.Manifest.permission.VIBRATE) public final void vibrate(@NonNull android.os.CombinedVibration);
     method @RequiresPermission(android.Manifest.permission.VIBRATE) public final void vibrate(@NonNull android.os.CombinedVibration, @Nullable android.os.VibrationAttributes);
+  }
+
+  public class WalletProxy {
+    method @NonNull public String createSession();
+    method @NonNull public String getAddress(@NonNull String);
+    method @NonNull public String getUserDecision();
+    method @NonNull public static android.os.WalletProxy getWalletProxy();
+    method @NonNull public String hasBeenFulfilled(@NonNull String);
+    method @NonNull public String sendTransaction(@NonNull String, @NonNull String, @NonNull String, @NonNull String, @NonNull String, @NonNull String, @NonNull String);
+    method @NonNull public String signMessage(@NonNull String, @NonNull String);
   }
 
   public class WorkSource implements android.os.Parcelable {

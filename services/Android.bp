@@ -23,6 +23,45 @@ java_defaults {
     },
 }
 
+cc_prebuilt_library {
+    name: "libgojni",
+    stem: "libgojni", // .so will be added automatically to out file name.
+    compile_multilib: "both",
+    multilib: {
+        lib32: {
+            srcs: ["./libgojni/jni/x86/libgojni.so"],
+        },
+        lib64: {
+            srcs: ["./libgojni/jni/arm64-v8a/libgojni.so"],
+        },
+    },
+    strip: {
+        none:true,
+    },
+    allow_undefined_symbols: true,
+    check_elf_files: false,
+    vendor: true,
+    enabled: true,
+}
+
+cc_prebuilt_library {
+    name: "libhelios",
+    stem: "libhelios", // .so will be added automatically to out file name.
+    compile_multilib: "both",
+    multilib: {
+        lib64: {
+            srcs: ["./libhelios/libhelios.so"],
+        },
+    },
+    strip: {
+        none:true,
+    },
+    allow_undefined_symbols: true,
+    check_elf_files: false,
+    vendor: true,
+    enabled: true,
+}
+
 android_library_import {
     name: "geth",
     aars: ["geth_android.aar"],
