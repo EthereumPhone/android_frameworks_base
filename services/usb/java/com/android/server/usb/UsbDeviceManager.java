@@ -181,7 +181,11 @@ public class UsbDeviceManager implements ActivityTaskManagerInternal.ScreenObser
     // Delay for debouncing USB disconnects.
     // We often get rapid connect/disconnect events when enabling USB functions,
     // which need debouncing.
-    private static final int UPDATE_DELAY = 1000;
+    private static final int DEVICE_STATE_UPDATE_DELAY_EXT = 3000;
+    private static final int DEVICE_STATE_UPDATE_DELAY = 1000;
+
+    // Delay for debouncing USB disconnects on Type-C ports in host mode
+    private static final int HOST_STATE_UPDATE_DELAY = 1000;
 
     // Timeout for entering USB request mode.
     // Request is cancelled if host does not configure device within 10 seconds.
@@ -680,7 +684,9 @@ public class UsbDeviceManager implements ActivityTaskManagerInternal.ScreenObser
             msg.arg1 = connected;
             msg.arg2 = configured;
             // debounce disconnects to avoid problems bringing up USB tethering
-            sendMessageDelayed(msg, (connected == 0) ? UPDATE_DELAY : 0);
+            sendMessageDelayed(msg,
+                    (connected == 0) ? (mScreenLocked ? DEVICE_STATE_UPDATE_DELAY
+                                                      : DEVICE_STATE_UPDATE_DELAY_EXT) : 0);
         }
 
         public void updateHostState(UsbPort port, UsbPortStatus status) {
@@ -695,7 +701,7 @@ public class UsbDeviceManager implements ActivityTaskManagerInternal.ScreenObser
             removeMessages(MSG_UPDATE_PORT_STATE);
             Message msg = obtainMessage(MSG_UPDATE_PORT_STATE, args);
             // debounce rapid transitions of connect/disconnect on type-c ports
-            sendMessageDelayed(msg, UPDATE_DELAY);
+            sendMessageDelayed(msg, HOST_STATE_UPDATE_DELAY);
         }
 
         private void setAdbEnabled(boolean enable) {
@@ -1514,7 +1520,7 @@ public class UsbDeviceManager implements ActivityTaskManagerInternal.ScreenObser
 
         public void setTrustRestrictUsb() {
             final int restrictUsb = LineageSettings.Global.getInt(mContentResolver,
-                    LineageSettings.Global.TRUST_RESTRICT_USB, 1);
+                    LineageSettings.Global.TRUST_RESTRICT_USB, 0);
             // Effective immediately, ejects any connected USB devices.
             // If the restriction is set to "only when locked", only execute once USB is
             // disconnected and keyguard is showing, to avoid ejecting connected devices

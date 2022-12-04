@@ -1240,23 +1240,26 @@ public class VolumeDialogImpl implements VolumeDialog,
                 == BluetoothProfile.STATE_CONNECTED;
     }
 
+    private boolean isMediaControllerAvailable(MediaController mediaController) {
+        return mediaController != null && !TextUtils.isEmpty(mediaController.getPackageName());
+    }
+
     public void initSettingsH() {
         if (mSettingsView != null) {
             mSettingsView.setVisibility(mDeviceProvisionedController.isCurrentUserSetup()
                     && mActivityManager.getLockTaskModeState() == LOCK_TASK_MODE_NONE
-                    && isBluetoothA2dpConnected()
+                    && (isMediaControllerAvailable(getActiveLocalMediaController())
+                            || isBluetoothA2dpConnected())
                     ? VISIBLE : GONE);
         }
         if (mSettingsIcon != null) {
             mSettingsIcon.setOnClickListener(v -> {
                 Events.writeEvent(Events.EVENT_SETTINGS_CLICK);
                 final MediaController mediaController = getActiveLocalMediaController();
-                String packageName =
-                        mediaController != null
-                                && !TextUtils.isEmpty(mediaController.getPackageName())
-                                ? mediaController.getPackageName()
-                                : "";
-                mMediaOutputDialogFactory.create(packageName, false, mDialogView);
+                String packageName = isMediaControllerAvailable(mediaController)
+                        ? mediaController.getPackageName()
+                        : "";
+                mMediaOutputDialogFactory.create(packageName, true, mDialogView);
                 dismissH(DISMISS_REASON_SETTINGS_CLICKED);
             });
         }
@@ -1579,19 +1582,21 @@ public class VolumeDialogImpl implements VolumeDialog,
                     mDialog.dismiss();
                     tryToRemoveCaptionsTooltip();
                     mExpanded = false;
-                    mExpandRows.setExpanded(mExpanded);
+                    if (mExpandRows != null) {
+                        mExpandRows.setExpanded(mExpanded);
+                    }
                     mAnimatingRows = 0;
                     mDefaultRow = null;
                     mIsAnimatingDismiss = false;
 
                     hideRingerDrawer();
+                    mController.notifyVisible(false);
                 }, 50));
         if (!shouldSlideInVolumeTray()) {
             animator.translationX(getTranslationForPanelLocation() * mDialogView.getWidth() / 2.0f);
         }
         animator.start();
         checkODICaptionsTooltip(true);
-        mController.notifyVisible(false);
         synchronized (mSafetyWarningLock) {
             if (mSafetyWarning != null) {
                 if (D.BUG) Log.d(TAG, "SafetyWarning dismissed");

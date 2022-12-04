@@ -66,9 +66,14 @@ import com.android.systemui.flags.FeatureFlags;
 import com.android.systemui.keyguard.WakefulnessLifecycle;
 import com.android.systemui.monet.ColorScheme;
 import com.android.systemui.settings.UserTracker;
+import com.android.systemui.statusbar.policy.ConfigurationController;
+import com.android.systemui.statusbar.policy.ConfigurationController.ConfigurationListener;
 import com.android.systemui.statusbar.policy.DeviceProvisionedController;
 import com.android.systemui.statusbar.policy.DeviceProvisionedController.DeviceProvisionedListener;
 import com.android.systemui.util.settings.SecureSettings;
+import com.android.systemui.util.settings.SystemSettings;
+
+import lineageos.providers.LineageSettings;
 
 import org.json.JSONException;
 import org.json.JSONObject;
@@ -97,6 +102,8 @@ import javax.inject.Inject;
 @SysUISingleton
 public class ThemeOverlayController extends SystemUI implements Dumpable {
     protected static final String TAG = "ThemeOverlayController";
+    protected static final String OVERLAY_BERRY_BLACK_THEME =
+            "org.lineageos.overlay.customization.blacktheme";
     private static final boolean DEBUG = true;
 
     protected static final int NEUTRAL = 0;
@@ -107,10 +114,12 @@ public class ThemeOverlayController extends SystemUI implements Dumpable {
     private final BroadcastDispatcher mBroadcastDispatcher;
     private final Executor mBgExecutor;
     private final SecureSettings mSecureSettings;
+    private final SystemSettings mSystemSettings;
     private final Executor mMainExecutor;
     private final Handler mBgHandler;
     private final boolean mIsMonetEnabled;
     private final UserTracker mUserTracker;
+    private final ConfigurationController mConfigurationController;
     private final DeviceProvisionedController mDeviceProvisionedController;
     // Current wallpaper colors associated to a user.
     private final SparseArray<WallpaperColors> mCurrentColors = new SparseArray<>();
@@ -138,6 +147,15 @@ public class ThemeOverlayController extends SystemUI implements Dumpable {
     private boolean mDeferredThemeEvaluation;
     // Determines if we should ignore THEME_CUSTOMIZATION_OVERLAY_PACKAGES setting changes.
     private boolean mSkipSettingChange;
+
+    private final ConfigurationListener mConfigurationListener =
+            new ConfigurationListener() {
+                @Override
+                public void onUiModeChanged() {
+                    Log.i(TAG, "Re-applying theme on UI change");
+                    reevaluateSystemTheme(true /* forceReload */);
+                }
+            };
 
     private final DeviceProvisionedListener mDeviceProvisionedListener =
             new DeviceProvisionedListener() {
@@ -231,6 +249,11 @@ public class ThemeOverlayController extends SystemUI implements Dumpable {
             }
         }
         return false;
+    }
+
+    private boolean isNightMode() {
+        return (mContext.getResources().getConfiguration().uiMode
+                & Configuration.UI_MODE_NIGHT_MASK) == Configuration.UI_MODE_NIGHT_YES;
     }
 
     private void handleWallpaperColors(WallpaperColors wallpaperColors, int flags, int userId) {
@@ -342,10 +365,12 @@ public class ThemeOverlayController extends SystemUI implements Dumpable {
             SecureSettings secureSettings, WallpaperManager wallpaperManager,
             UserManager userManager, DeviceProvisionedController deviceProvisionedController,
             UserTracker userTracker, DumpManager dumpManager, FeatureFlags featureFlags,
-            WakefulnessLifecycle wakefulnessLifecycle) {
+            WakefulnessLifecycle wakefulnessLifecycle, ConfigurationController
+            configurationController, SystemSettings systemSettings) {
         super(context);
 
         mIsMonetEnabled = featureFlags.isMonetEnabled();
+        mConfigurationController = configurationController;
         mDeviceProvisionedController = deviceProvisionedController;
         mBroadcastDispatcher = broadcastDispatcher;
         mUserManager = userManager;
@@ -354,6 +379,7 @@ public class ThemeOverlayController extends SystemUI implements Dumpable {
         mBgHandler = bgHandler;
         mThemeManager = themeOverlayApplier;
         mSecureSettings = secureSettings;
+        mSystemSettings = systemSettings;
         mWallpaperManager = wallpaperManager;
         mUserTracker = userTracker;
         mWakefulnessLifecycle = wakefulnessLifecycle;
@@ -394,12 +420,61 @@ public class ThemeOverlayController extends SystemUI implements Dumpable {
                 },
                 UserHandle.USER_ALL);
 
+        mSystemSettings.registerContentObserverForUser(
+                LineageSettings.System.getUriFor(LineageSettings.System.BERRY_BLACK_THEME),
+                false,
+                new ContentObserver(mBgHandler) {
+                    @Override
+                    public void onChange(boolean selfChange, Collection<Uri> collection, int flags,
+                            int userId) {
+                        if (DEBUG) Log.d(TAG, "Overlay changed for user: " + userId);
+                        if (mUserTracker.getUserId() != userId) {
+                            return;
+                        }
+                        if (!mDeviceProvisionedController.isUserSetup(userId)) {
+                            Log.i(TAG, "Theme application deferred when setting changed.");
+                            mDeferredThemeEvaluation = true;
+                            return;
+                        }
+                        reevaluateSystemTheme(true /* forceReload */);
+                    }
+                },
+                UserHandle.USER_ALL);
+
+        mSystemSettings.registerContentObserverForUser(
+                LineageSettings.System.getUriFor(LineageSettings.System.STATUS_BAR_BATTERY_STYLE),
+                false,
+                new ContentObserver(mBgHandler) {
+                    @Override
+                    public void onChange(boolean selfChange, Collection<Uri> collection, int flags,
+                            int userId) {
+                        if (DEBUG) Log.d(TAG, "Overlay changed for user: " + userId);
+                        if (mUserTracker.getUserId() != userId) {
+                            return;
+                        }
+                        if (!mDeviceProvisionedController.isUserSetup(userId)) {
+                            Log.i(TAG, "Theme application deferred when setting changed.");
+                            mDeferredThemeEvaluation = true;
+                            return;
+                        }
+                        boolean isCircleBattery = LineageSettings.System.getIntForUser(
+                                mContext.getContentResolver(),
+                                LineageSettings.System.STATUS_BAR_BATTERY_STYLE,
+                                0, UserHandle.USER_CURRENT) == 1;
+                        if (isCircleBattery) {
+                            reevaluateSystemTheme(true /* forceReload */);
+                        }
+                    }
+                },
+                UserHandle.USER_ALL);
+
         if (!mIsMonetEnabled) {
             return;
         }
 
         mUserTracker.addCallback(mUserTrackerCallback, mMainExecutor);
 
+        mConfigurationController.addCallback(mConfigurationListener);
         mDeviceProvisionedController.addCallback(mDeviceProvisionedListener);
 
         // Upon boot, make sure we have the most up to date colors
@@ -492,10 +567,7 @@ public class ThemeOverlayController extends SystemUI implements Dumpable {
      * Given a color candidate, return an overlay definition.
      */
     protected @Nullable FabricatedOverlay getOverlay(int color, int type) {
-        boolean nightMode = (mContext.getResources().getConfiguration().uiMode
-                & Configuration.UI_MODE_NIGHT_MASK) == Configuration.UI_MODE_NIGHT_YES;
-
-        mColorScheme = new ColorScheme(color, nightMode);
+        mColorScheme = new ColorScheme(color, isNightMode());
         List<Integer> colorShades = type == ACCENT
                 ? mColorScheme.getAllAccentColors() : mColorScheme.getAllNeutralColors();
         String name = type == ACCENT ? "accent" : "neutral";
@@ -608,6 +680,14 @@ public class ThemeOverlayController extends SystemUI implements Dumpable {
         if (!categoryToPackage.containsKey(OVERLAY_CATEGORY_ACCENT_COLOR)
                 && mSecondaryOverlay != null) {
             categoryToPackage.put(OVERLAY_CATEGORY_ACCENT_COLOR, mSecondaryOverlay.getIdentifier());
+        }
+
+        boolean isBlackMode = (LineageSettings.System.getIntForUser(
+                mContext.getContentResolver(), LineageSettings.System.BERRY_BLACK_THEME,
+                0, currentUser) == 1) && isNightMode();
+        if (categoryToPackage.containsKey(OVERLAY_CATEGORY_SYSTEM_PALETTE) && isBlackMode) {
+            OverlayIdentifier blackTheme = new OverlayIdentifier(OVERLAY_BERRY_BLACK_THEME);
+            categoryToPackage.put(OVERLAY_CATEGORY_SYSTEM_PALETTE, blackTheme);
         }
 
         Set<UserHandle> managedProfiles = new HashSet<>();
