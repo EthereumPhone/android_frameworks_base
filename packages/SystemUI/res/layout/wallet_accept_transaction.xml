@@ -25,7 +25,32 @@
             app:layout_constraintStart_toStartOf="@+id/guideline"
             app:layout_constraintTop_toBottomOf="@+id/choosemethod" />
 
+        <TextView
+            android:id="@+id/messagetitle2"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="64dp"
+            android:fontFamily="sans-serif-light"
+            android:text="Chain-ID"
+            android:textColor="@color/ethOS_gray"
+            android:textSize="12sp"
+            app:layout_constraintStart_toStartOf="@+id/guideline4"
+            app:layout_constraintTop_toBottomOf="@+id/choosemethod" />
+
         <TextView android:id="@+id/message" android:layout_width="0dp" android:layout_height="wrap_content" android:layout_marginTop="8dp" android:text="0x95abDa53Bc5E9fBBDce34603614018d32CED219e " android:textAlignment="viewStart" android:textColor="@color/ethOS_white" android:textSize="12sp" app:layout_constraintEnd_toStartOf="@+id/guideline3" app:layout_constraintStart_toStartOf="@+id/guideline" app:layout_constraintTop_toBottomOf="@+id/messagetitle" />
+
+        <TextView
+            android:id="@+id/chainIdTextView"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:text="0 "
+            android:textAlignment="viewStart"
+            android:textColor="@color/ethOS_white"
+            android:textSize="12sp"
+            app:layout_constraintEnd_toStartOf="@+id/guideline2"
+            app:layout_constraintStart_toStartOf="@+id/guideline4"
+            app:layout_constraintTop_toBottomOf="@+id/messagetitle2" />
 
         <TextView android:id="@+id/amounttitle" android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_marginTop="16dp" android:fontFamily="sans-serif-light" android:text="Amount" android:textColor="@color/ethOS_gray" android:textSize="12sp" app:layout_constraintStart_toStartOf="@+id/guideline" app:layout_constraintTop_toBottomOf="@+id/message" />
 

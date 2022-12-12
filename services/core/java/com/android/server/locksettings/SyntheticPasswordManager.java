@@ -119,7 +119,7 @@ public class SyntheticPasswordManager {
     private static final int PASSWORD_SCRYPT_N = 11;
     private static final int PASSWORD_SCRYPT_R = 3;
     private static final int PASSWORD_SCRYPT_P = 1;
-    private static final int PASSWORD_SALT_LENGTH = 16;
+    private static final int PASSWORD_SALT_LENGTH = 12;
     private static final int PASSWORD_TOKEN_LENGTH = 32;
     private static final String TAG = "SyntheticPasswordManager";
 

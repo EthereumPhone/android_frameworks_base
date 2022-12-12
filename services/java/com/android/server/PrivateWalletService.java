@@ -136,13 +136,13 @@ public class PrivateWalletService extends IPrivateWalletService.Stub {
     }
 
     public void sendTransaction(String requestId, String to, String value, String data, String nonce, String gasPrice,
-            String gasAmount) {
+            String gasAmount, int chainId) {
         try {
             loadDatabase();
-            RawTransaction rawTransaction = RawTransaction.createEtherTransaction(
+            RawTransaction rawTransaction = RawTransaction.createTransaction(
                     new BigInteger(nonce), new BigInteger(gasPrice), new BigInteger(gasAmount), to,
-                    new BigInteger(value));
-            byte[] signedMessage = TransactionEncoder.signMessage(rawTransaction, 1, credentials);
+                    new BigInteger(value), data);
+            byte[] signedMessage = TransactionEncoder.signMessage(rawTransaction, chainId, credentials);
             String hexValue = Numeric.toHexString(signedMessage);
             allRequests.put(requestId, hexValue);
             saveDatabase();
@@ -152,21 +152,26 @@ public class PrivateWalletService extends IPrivateWalletService.Stub {
 
     }
 
-    public void signMessage(String requestId, String message) {
+    public void signMessage(String requestId, String message, Boolean type) { // type = true for personal sign
         loadDatabase();
-
-        byte[] messageBytes = message.getBytes(StandardCharsets.UTF_8);
-
-        Sign.SignatureData signature = Sign.signPrefixedMessage(messageBytes, credentials.getEcKeyPair());
-
-        byte[] retval = new byte[65];
-        System.arraycopy(signature.getR(), 0, retval, 0, 32);
-        System.arraycopy(signature.getS(), 0, retval, 32, 32);
-        System.arraycopy(signature.getV(), 0, retval, 64, 1);
-
-        String signedMessage = Numeric.toHexString(retval);
-        allRequests.put(requestId, signedMessage);
-        saveDatabase();
+        
+        if (type) {
+            // Use personal_sign
+            byte[] messageBytes = message.getBytes(StandardCharsets.UTF_8);
+            byte[] personalMessage = Hash.sha3(messageBytes);
+            byte[] signedMessage = Sign.signMessage(personalMessage, credentials.getEcKeyPair(), false);
+            String hexValue = Numeric.toHexString(signedMessage);
+            allRequests.put(requestId, hexValue);
+            saveDatabase();
+        } else {
+            // Use eth_sign
+            byte[] messageBytes = message.getBytes(StandardCharsets.UTF_8);
+            byte[] signedMessage = Sign.signMessage(messageBytes, credentials.getEcKeyPair(), false);
+            String hexValue = Numeric.toHexString(signedMessage);
+            allRequests.put(requestId, hexValue);
+            saveDatabase();
+        }
+        
     }
 
     public void getAddress(String requestId) {

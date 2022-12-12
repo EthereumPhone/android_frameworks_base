@@ -65,7 +65,8 @@ public class WalletService extends IWalletService.Stub {
       String data,
       String nonce,
       String gasPrice,
-      String gasAmount) {
+      String gasAmount,
+      int chainId) {
     Log.v(TAG, "sendTransaction, " + session);
     if (allSessions.contains(session)) {
       UUID uuid = UUID.randomUUID();
@@ -81,13 +82,14 @@ public class WalletService extends IWalletService.Stub {
       in.putExtra("nonce", nonce);
       in.putExtra("gasPrice", gasPrice);
       in.putExtra("gasAmount", gasAmount);
+      in.putExtra("chainId", chainId);
       context.sendBroadcast(in);
       return uuid.toString();
     }
     return "no session";
   }
 
-  public String signMessage(String session, String message) {
+  public String signMessage(String session, String message, Boolean type) {
     Log.v(TAG, "signMessage, " + session + ": " + message);
     if (allSessions.contains(session)) {
       UUID uuid = UUID.randomUUID();
@@ -98,6 +100,7 @@ public class WalletService extends IWalletService.Stub {
       in.putExtra("method", "signMessage");
       in.putExtra("requestID", uuid.toString());
       in.putExtra("message", message);
+      in.putExtra("type", type);
       context.sendBroadcast(in);
       return uuid.toString();
     }

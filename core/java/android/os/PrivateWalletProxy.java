@@ -60,18 +60,18 @@ public class PrivateWalletProxy {
     }
 
     @NonNull
-    public void sendTransaction(@NonNull String requestId, @NonNull String to, @NonNull String value, @NonNull String data, @NonNull String nonce, @NonNull String gasPrice, @NonNull String gasAmount) {
+    public void sendTransaction(@NonNull String requestId, @NonNull String to, @NonNull String value, @NonNull String data, @NonNull String nonce, @NonNull String gasPrice, @NonNull String gasAmount, @NonNull int chainId) {
         try {
-            mIMyService.sendTransaction(requestId, to, value, data, nonce, gasPrice, gasAmount);
+            mIMyService.sendTransaction(requestId, to, value, data, nonce, gasPrice, gasAmount, chainId);
         } catch(Exception e) {
             e.printStackTrace();
         }
     }
 
     @NonNull
-    public void signMessage(@NonNull String requestId, @NonNull String message)  {
+    public void signMessage(@NonNull String requestId, @NonNull String message, @NonNull Boolean type)  {
         try {
-            mIMyService.signMessage(requestId, message);
+            mIMyService.signMessage(requestId, message, type);
         } catch(Exception e) {
             e.printStackTrace();
         }

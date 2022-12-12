@@ -3499,37 +3499,12 @@ public class WindowManagerService extends IWindowManager.Stub
         mInputManager.switchKeyboardLayout(deviceId, direction);
     }
 
-    // Shutdown geth client
-    public void shutdownGeth() {
-        System.out.println("GoLog: Shutting down client in shutdown of phone");
-        Class cls = null;
-        try {
-            cls = Class.forName("android.os.GethProxy");
-        } catch (ClassNotFoundException e) {
-            e.printStackTrace();
-        }        
-
-        Method shutdownWithoutPreference = null;
-        try {
-            shutdownWithoutPreference = cls.getMethod("shutdownWithoutPreference");
-        } catch (NoSuchMethodException e) {
-            e.printStackTrace();
-        }
-
-        try {
-            shutdownWithoutPreference.invoke(gethShutdownManager);
-        } catch (IllegalAccessException e) {
-            e.printStackTrace();
-        } catch (InvocationTargetException e) {
-            e.printStackTrace();
-        }
-    }
+    
 
     // Called by window manager policy.  Not exposed externally.
     @Override
     public void shutdown(boolean confirm) {
         // Pass in the UI context, since ShutdownThread requires it (to show UI).
-        shutdownGeth();
         ShutdownThread.shutdown(ActivityThread.currentActivityThread().getSystemUiContext(),
                 PowerManager.SHUTDOWN_USER_REQUESTED, confirm);
     }
@@ -3537,7 +3512,6 @@ public class WindowManagerService extends IWindowManager.Stub
     // Called by window manager policy.  Not exposed externally.
     @Override
     public void reboot(boolean confirm) {
-        shutdownGeth();
         // Pass in the UI context, since ShutdownThread requires it (to show UI).
         ShutdownThread.reboot(ActivityThread.currentActivityThread().getSystemUiContext(),
                 PowerManager.SHUTDOWN_USER_REQUESTED, confirm);
@@ -3546,7 +3520,6 @@ public class WindowManagerService extends IWindowManager.Stub
     // Called by window manager policy.  Not exposed externally.
     @Override
     public void reboot(boolean confirm, String reason) {
-        shutdownGeth();
         // Pass in the UI context, since ShutdownThread requires it (to show UI).
         ShutdownThread.rebootCustom(ActivityThread.currentActivityThread().getSystemUiContext(),
                 reason, confirm);
@@ -3555,7 +3528,6 @@ public class WindowManagerService extends IWindowManager.Stub
     // Called by window manager policy.  Not exposed externally.
     @Override
     public void rebootSafeMode(boolean confirm) {
-        shutdownGeth();
         // Pass in the UI context, since ShutdownThread requires it (to show UI).
         ShutdownThread.rebootSafeMode(ActivityThread.currentActivityThread().getSystemUiContext(),
                 confirm);

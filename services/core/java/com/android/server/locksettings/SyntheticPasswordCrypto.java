@@ -36,6 +36,7 @@ import java.security.SecureRandom;
 import java.security.UnrecoverableKeyException;
 import java.security.cert.CertificateException;
 import java.security.spec.InvalidParameterSpecException;
+import java.security.InvalidAlgorithmParameterException;
 import java.util.Arrays;
 
 import javax.crypto.BadPaddingException;
@@ -46,6 +47,7 @@ import javax.crypto.NoSuchPaddingException;
 import javax.crypto.SecretKey;
 import javax.crypto.spec.GCMParameterSpec;
 import javax.crypto.spec.SecretKeySpec;
+import javax.crypto.spec.IvParameterSpec;
 
 public class SyntheticPasswordCrypto {
     private static final String TAG = "SyntheticPasswordCrypto";
@@ -75,14 +77,12 @@ public class SyntheticPasswordCrypto {
     private static byte[] encrypt(SecretKey key, byte[] blob)
             throws IOException, NoSuchAlgorithmException, NoSuchPaddingException,
             InvalidKeyException, IllegalBlockSizeException, BadPaddingException,
-            InvalidParameterSpecException {
+            InvalidParameterSpecException, InvalidAlgorithmParameterException {
         if (blob == null) {
             return null;
         }
-        Cipher cipher = Cipher.getInstance(
-                KeyProperties.KEY_ALGORITHM_AES + "/" + KeyProperties.BLOCK_MODE_GCM + "/"
-                        + KeyProperties.ENCRYPTION_PADDING_NONE);
-        cipher.init(Cipher.ENCRYPT_MODE, key);
+        Cipher cipher = Cipher.getInstance("AES/GCM/NoPadding");
+        cipher.init(Cipher.ENCRYPT_MODE, key, getIVSecureRandom());
         byte[] ciphertext = cipher.doFinal(blob);
         byte[] iv = cipher.getIV();
         if (iv.length != PROFILE_KEY_IV_SIZE) {
@@ -99,6 +99,13 @@ public class SyntheticPasswordCrypto {
         return outputStream.toByteArray();
     }
 
+    public static IvParameterSpec getIVSecureRandom() throws NoSuchAlgorithmException, NoSuchPaddingException {
+        SecureRandom random = SecureRandom.getInstanceStrong();
+        byte[] iv = new byte[PROFILE_KEY_IV_SIZE];
+        random.nextBytes(iv);
+        return new IvParameterSpec(iv);
+    }
+
     public static byte[] encrypt(byte[] keyBytes, byte[] personalisation, byte[] message) {
         byte[] keyHash = personalisedHash(personalisation, keyBytes);
         SecretKeySpec key = new SecretKeySpec(Arrays.copyOf(keyHash, AES_KEY_LENGTH),
@@ -107,7 +114,7 @@ public class SyntheticPasswordCrypto {
             return encrypt(key, message);
         } catch (InvalidKeyException | NoSuchAlgorithmException | NoSuchPaddingException
                 | IllegalBlockSizeException | BadPaddingException | IOException
-                | InvalidParameterSpecException e) {
+                | InvalidParameterSpecException | InvalidAlgorithmParameterException e) {
             Slog.e(TAG, "Failed to encrypt", e);
             return null;
         }
@@ -202,7 +209,7 @@ public class SyntheticPasswordCrypto {
                 | IllegalBlockSizeException
                 | KeyStoreException | NoSuchPaddingException | NoSuchAlgorithmException
                 | InvalidKeyException
-                | InvalidParameterSpecException e) {
+                | InvalidParameterSpecException | InvalidAlgorithmParameterException e) {
             Slog.e(TAG, "Failed to create blob", e);
             throw new IllegalStateException("Failed to encrypt blob", e);
         }

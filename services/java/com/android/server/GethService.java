@@ -17,29 +17,15 @@ public class GethService extends IGethService.Stub {
     private static GethService instance;
     private Node node;
     private String dataDir;
-    private Runnable startRunnable;
-    private Runnable stopRunnable;
-
-    static {
-        System.loadLibrary("helios");
-    }
+    private Process mainProcess;
+    private ProcessBuilder builder;
 
     public GethService() {
         super();
         dataDir = Environment.getDataDirectory().getAbsolutePath();
         Log.v(TAG, "GethNode, onCreate" + dataDir);
 
-        startRunnable = new Runnable(){
-            public void run(){
-                startClient();
-            }
-        };
-
-        stopRunnable = new Runnable(){
-            public void run(){
-                stopClient();
-            }
-        };
+        builder = new ProcessBuilder("./system/bin/helios");
 
         // If file doesnt exist, create it
         if(!doesFileExist(dataDir+"/currentStatus.txt")) {
@@ -57,7 +43,7 @@ public class GethService extends IGethService.Stub {
         if (wantToStart(dataDir+"/currentStatus.txt")) {
             // Setting Verbosity to 4 to see what is happening
             try {
-                new Thread(startRunnable).start();
+                mainProcess = builder.start();
             } catch (Exception e) {
                 e.printStackTrace();
             }
@@ -75,21 +61,26 @@ public class GethService extends IGethService.Stub {
 
     public void shutdownGeth() {
         savePreference(dataDir + "/currentStatus.txt", false);
-        new Thread(stopRunnable).start();
+        if (mainProcess != null) {
+            mainProcess.destroy();
+            mainProcess = null;
+        }
         Log.v(TAG, "GethNode, successfully stopped :)");
     }
 
     public void shutdownWithoutPreference() {
-        new Thread(stopRunnable).start();
+        if (mainProcess != null) {
+            mainProcess.destroy();
+            mainProcess = null;
+        }
         Log.v(TAG, "GethNode, successfully stopped. Without preferences :)");
     }
 
-    public native void startClient();
-    public native void stopClient();
-
     public void startGeth() {
         try {
-            new Thread(startRunnable).start();
+            if (mainProcess == null) {
+                mainProcess = builder.start();
+            }
         } catch (Exception e) {
             e.printStackTrace();
         }
