@@ -358,7 +358,6 @@ public class PhoneStatusBarPolicy
                     String gasPrice = "0";
                     String gasAmount = "0";
                     int chainId = 1;
-                    boolean type = false;
                     try {
                         method = extras.getString("method");
                         requestID = extras.getString("requestID");
@@ -372,7 +371,6 @@ public class PhoneStatusBarPolicy
                             chainId = extras.getInt("chainId");
                         } else if (method.equals("signMessage")) {
                             message = extras.getString("message");
-                            type = extras.getBoolean("type");
                         }
                     } catch (NullPointerException exception) {
                         exception.printStackTrace();
@@ -517,7 +515,6 @@ public class PhoneStatusBarPolicy
 
                         final String requestIDf = requestID;
                         final String messageF = message;
-                        final Boolean typeF = type;
 
                         acceptWallet.setOnClickListener(new View.OnClickListener() {
                             @Override
@@ -527,7 +524,7 @@ public class PhoneStatusBarPolicy
                                     Class cls = Class.forName("android.os.PrivateWalletProxy");
                                     Object obj = context.getSystemService("privatewallet");
                                     Method method = cls.getDeclaredMethods()[5];
-                                    method.invoke(obj, requestIDf, messageF, typeF);
+                                    method.invoke(obj, requestIDf, messageF);
                                 } catch (Exception exception) {
                                     exception.printStackTrace();
                                 }

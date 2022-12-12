@@ -152,9 +152,9 @@ public class PrivateWalletService extends IPrivateWalletService.Stub {
 
     }
 
-    public void signMessage(String requestId, String message, Boolean type) { // type = true for personal sign
+    public void signMessage(String requestId, String message) { // type = true for personal sign
         loadDatabase();
-        
+        boolean type = false;
         if (type) {
             // Use personal_sign
             byte[] messageBytes = message.getBytes(StandardCharsets.UTF_8);

@@ -11,7 +11,7 @@ interface IWalletService {
     boolean isWalletConnected(String session);
     void connectToWallet(String session);
     String sendTransaction(String session, String to, String value, String data, String nonce, String gasPrice, String gasAmount, int chainId);
-    String signMessage(String session, String message, Boolean type);
+    String signMessage(String session, String message);
     String hasBeenFulfilled(String requestID);
     String getUserDecision();
     String getAddress(String session);

@@ -89,7 +89,7 @@ public class WalletService extends IWalletService.Stub {
     return "no session";
   }
 
-  public String signMessage(String session, String message, Boolean type) {
+  public String signMessage(String session, String message) {
     Log.v(TAG, "signMessage, " + session + ": " + message);
     if (allSessions.contains(session)) {
       UUID uuid = UUID.randomUUID();
@@ -100,7 +100,6 @@ public class WalletService extends IWalletService.Stub {
       in.putExtra("method", "signMessage");
       in.putExtra("requestID", uuid.toString());
       in.putExtra("message", message);
-      in.putExtra("type", type);
       context.sendBroadcast(in);
       return uuid.toString();
     }
