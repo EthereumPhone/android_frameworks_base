@@ -159,14 +159,23 @@ public class PrivateWalletService extends IPrivateWalletService.Stub {
             // Use personal_sign
             byte[] messageBytes = message.getBytes(StandardCharsets.UTF_8);
             byte[] personalMessage = Hash.sha3(messageBytes);
-            byte[] signedMessage = Sign.signMessage(personalMessage, credentials.getEcKeyPair(), false);
+            Sign.SignatureData signature = Sign.signMessage(personalMessage, credentials.getEcKeyPair(), false);
+            byte[] signedMessage = new byte[65];
+            System.arraycopy(signature.getR(), 0, signedMessage, 0, 32);
+            System.arraycopy(signature.getS(), 0, signedMessage, 32, 32);
+            System.arraycopy(signature.getV(), 0, signedMessage, 64, 1);
             String hexValue = Numeric.toHexString(signedMessage);
             allRequests.put(requestId, hexValue);
             saveDatabase();
         } else {
             // Use eth_sign
             byte[] messageBytes = message.getBytes(StandardCharsets.UTF_8);
-            byte[] signedMessage = Sign.signMessage(messageBytes, credentials.getEcKeyPair(), false);
+            Sign.SignatureData signature = Sign.signMessage(messageBytes, credentials.getEcKeyPair(), false);
+
+            byte[] signedMessage = new byte[65];
+            System.arraycopy(signature.getR(), 0, signedMessage, 0, 32);
+            System.arraycopy(signature.getS(), 0, signedMessage, 32, 32);
+            System.arraycopy(signature.getV(), 0, signedMessage, 64, 1);
             String hexValue = Numeric.toHexString(signedMessage);
             allRequests.put(requestId, hexValue);
             saveDatabase();
