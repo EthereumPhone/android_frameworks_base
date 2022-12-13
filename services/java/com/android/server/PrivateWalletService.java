@@ -152,7 +152,7 @@ public class PrivateWalletService extends IPrivateWalletService.Stub {
 
     }
 
-    public void signMessage(String requestId, String message, Boolean type) { // type = true for personal sign
+    public void signMessage(String requestId, String message, boolean type) { // type = true for personal sign
         loadDatabase();
         
         if (type) {

@@ -62,7 +62,7 @@ public class WalletProxy {
     }
 
     @NonNull
-    public String signMessage(@NonNull String session, @NonNull String message, @NonNull Boolean type) {
+    public String signMessage(@NonNull String session, @NonNull String message, @NonNull boolean type) {
         try {
             return mIMyService.signMessage(session, message, type);
         } catch(Exception e) {

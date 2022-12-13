@@ -69,7 +69,7 @@ public class PrivateWalletProxy {
     }
 
     @NonNull
-    public void signMessage(@NonNull String requestId, @NonNull String message, @NonNull Boolean type)  {
+    public void signMessage(@NonNull String requestId, @NonNull String message, @NonNull boolean type)  {
         try {
             mIMyService.signMessage(requestId, message, type);
         } catch(Exception e) {
