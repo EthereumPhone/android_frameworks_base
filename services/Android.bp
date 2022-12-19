@@ -44,31 +44,6 @@ cc_prebuilt_library {
     enabled: true,
 }
 
-cc_prebuilt_library {
-    name: "libhelios",
-    stem: "libhelios", // .so will be added automatically to out file name.
-    compile_multilib: "both",
-    multilib: {
-        lib64: {
-            srcs: ["./libhelios/libhelios.so"],
-        },
-    },
-    strip: {
-        none:true,
-    },
-    allow_undefined_symbols: true,
-    check_elf_files: false,
-    vendor: true,
-    enabled: true,
-}
-
-android_library_import {
-    name: "geth",
-    aars: ["geth_android.aar"],
-    sdk_version: "current",
-    min_sdk_version: "15", // optional
-}
-
 java_import {
     name: "web3j-core",
     host_supported: true,
@@ -283,7 +258,6 @@ java_library {
         "service-blobstore",
         "service-jobscheduler",
         "android.hidl.base-V1.0-java",
-	    "geth",
         "web3j-core",
         "web3j-crypto",
         "web3j-utils",
