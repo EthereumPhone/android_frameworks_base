@@ -1,6 +1,5 @@
 package com.android.server;
 
-import geth.*;
 import com.android.server.SystemService;
 import android.content.Context;
 import android.util.Log;
@@ -15,7 +14,6 @@ import java.io.FileNotFoundException;
 public class GethService extends IGethService.Stub {
     private static final String TAG = "GethService";
     private static GethService instance;
-    private Node node;
     private String dataDir;
     private Process mainProcess;
     private ProcessBuilder builder;
