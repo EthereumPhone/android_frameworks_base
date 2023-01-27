@@ -44,6 +44,53 @@ java_library {
         "WindowManager-Shell-proto",
     ],
 }
+// biometric-1.1.0.aar
+android_library_import {
+    name: "androidx-biometrics",
+    aars: ["libs/biometric-1.1.0.aar"],
+    sdk_version: "current",
+}
+
+// core-1.3.2.aar
+android_library_import {
+    name: "androidx-core",
+    aars: ["libs/core-1.3.2.aar"],
+    sdk_version: "current",
+}
+
+// fragment-1.2.5.aar
+android_library_import {
+    name: "androidx-fragment",
+    aars: ["libs/fragment-1.2.5.aar"],
+    sdk_version: "current",
+}
+// activity-1.1.0.aar
+android_library_import {
+    name: "androidx-activity",
+    aars: ["libs/activity-1.1.0.aar"],
+    sdk_version: "current",
+}
+
+// appcompat-1.2.0.aar
+android_library_import {
+    name: "androidx-appcompat",
+    aars: ["libs/appcompat-1.2.0.aar"],
+    sdk_version: "current",
+}
+
+// lifecycle-livedata-core-2.2.0.aar
+android_library_import {
+    name: "androidx-lifecycle-livedata",
+    aars: ["libs/lifecycle-livedata-core-2.2.0.aar"],
+    sdk_version: "current",
+}
+
+// lifecycle-viewmodel-2.2.0.aar
+android_library_import {
+    name: "androidx-lifecycle-viewmodel",
+    aars: ["libs/lifecycle-viewmodel-2.2.0.aar"],
+    sdk_version: "current",
+}
 
 java_library {
     name: "SystemUI-tags",
@@ -102,6 +149,12 @@ android_library {
         "androidx.palette_palette",
         "androidx.legacy_legacy-preference-v14",
         "androidx.leanback_leanback",
+        "androidx-biometrics",
+        "androidx-core",
+        "androidx-fragment",
+        "androidx-activity",
+        "androidx-lifecycle-livedata",
+        "androidx-lifecycle-viewmodel",
         "androidx.slice_slice-core",
         "androidx.slice_slice-view",
         "androidx.slice_slice-builders",

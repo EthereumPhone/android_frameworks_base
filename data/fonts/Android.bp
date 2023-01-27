@@ -40,6 +40,11 @@ prebuilt_font {
 }
 
 prebuilt_font {
+    name: "SFUIDisplayRegular.ttf",
+    src: "SFUIDisplayRegular.ttf",
+}
+
+prebuilt_font {
     name: "AndroidClock.ttf",
     src: "AndroidClock.ttf",
 }

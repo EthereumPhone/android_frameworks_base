@@ -23,71 +23,25 @@ java_defaults {
     },
 }
 
-cc_prebuilt_library {
-    name: "libgojni",
-    stem: "libgojni", // .so will be added automatically to out file name.
-    compile_multilib: "both",
-    multilib: {
-        lib32: {
-            srcs: ["./libgojni/jni/x86/libgojni.so"],
-        },
-        lib64: {
-            srcs: ["./libgojni/jni/arm64-v8a/libgojni.so"],
-        },
-    },
-    strip: {
-        none:true,
-    },
-    allow_undefined_symbols: true,
-    check_elf_files: false,
-    vendor: true,
-    enabled: true,
-}
-
-cc_prebuilt_library {
-    name: "libhelios",
-    stem: "libhelios", // .so will be added automatically to out file name.
-    compile_multilib: "both",
-    multilib: {
-        lib64: {
-            srcs: ["./libhelios/libhelios.so"],
-        },
-    },
-    strip: {
-        none:true,
-    },
-    allow_undefined_symbols: true,
-    check_elf_files: false,
-    vendor: true,
-    enabled: true,
-}
-
-android_library_import {
-    name: "geth",
-    aars: ["geth_android.aar"],
-    sdk_version: "current",
-    min_sdk_version: "15", // optional
-}
-
 java_import {
     name: "web3j-core",
     host_supported: true,
     installable: false,
-    jars: ["web3j-core-4.8.8-android.jar"],
+    jars: ["web3j-core-4.9.5-SNAPSHOT.jar"],
 }
 
 java_import {
     name: "web3j-crypto",
     host_supported: true,
     installable: false,
-    jars: ["crypto-4.8.8-android.jar"],
+    jars: ["crypto-4.9.5-android.jar"],
 }
 
 java_import {
     name: "web3j-utils",
     host_supported: true,
     installable: false,
-    jars: ["utils-4.8.8-android.jar"],
+    jars: ["utils-4.9.5-android.jar"],
 }
 
 java_import {
@@ -283,7 +237,6 @@ java_library {
         "service-blobstore",
         "service-jobscheduler",
         "android.hidl.base-V1.0-java",
-	    "geth",
         "web3j-core",
         "web3j-crypto",
         "web3j-utils",

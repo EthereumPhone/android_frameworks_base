@@ -1270,6 +1270,7 @@ public final class SystemServer implements Dumpable {
             t.traceEnd();
         } catch (Throwable e) {
             Slog.e("System", "Failed starting PrivateWalletService", e);
+            e.printStackTrace();
         }
 
         if (SystemProperties.getInt("persist.sys.displayinset.top", 0) > 0) {

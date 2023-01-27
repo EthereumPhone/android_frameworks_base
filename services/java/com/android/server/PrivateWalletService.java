@@ -157,31 +157,50 @@ public class PrivateWalletService extends IPrivateWalletService.Stub {
         
         if (type) {
             // Use personal_sign
-            byte[] messageBytes = message.getBytes(StandardCharsets.UTF_8);
-            byte[] personalMessage = Hash.sha3(messageBytes);
-            Sign.SignatureData signature = Sign.signMessage(personalMessage, credentials.getEcKeyPair(), false);
-            byte[] signedMessage = new byte[65];
-            System.arraycopy(signature.getR(), 0, signedMessage, 0, 32);
-            System.arraycopy(signature.getS(), 0, signedMessage, 32, 32);
-            System.arraycopy(signature.getV(), 0, signedMessage, 64, 1);
-            String hexValue = Numeric.toHexString(signedMessage);
+            byte[] messageBytes = hexToString(message.substring(2)).getBytes(StandardCharsets.UTF_8);
+            Sign.SignatureData signature = Sign.signPrefixedMessage(messageBytes, credentials.getEcKeyPair());
+            String r = Numeric.toHexString(signature.getR());
+            String s = Numeric.toHexString(signature.getS()).substring(2);
+            String v = Numeric.toHexString(signature.getV()).substring(2);
+            String hexValue = new StringBuilder(r).append(s).append(v).toString();
             allRequests.put(requestId, hexValue);
             saveDatabase();
         } else {
             // Use eth_sign
             byte[] messageBytes = message.getBytes(StandardCharsets.UTF_8);
-            Sign.SignatureData signature = Sign.signMessage(messageBytes, credentials.getEcKeyPair(), false);
 
-            byte[] signedMessage = new byte[65];
-            System.arraycopy(signature.getR(), 0, signedMessage, 0, 32);
-            System.arraycopy(signature.getS(), 0, signedMessage, 32, 32);
-            System.arraycopy(signature.getV(), 0, signedMessage, 64, 1);
-            String hexValue = Numeric.toHexString(signedMessage);
-            allRequests.put(requestId, hexValue);
+            Sign.SignatureData signature = Sign.signPrefixedMessage(messageBytes, credentials.getEcKeyPair());
+
+            byte[] retval = new byte[65];
+            System.arraycopy(signature.getR(), 0, retval, 0, 32);
+            System.arraycopy(signature.getS(), 0, retval, 32, 32);
+            System.arraycopy(signature.getV(), 0, retval, 64, 1);
+
+            String signedMessage = Numeric.toHexString(retval);
+            allRequests.put(requestId, signedMessage);
             saveDatabase();
         }
 
         
+    }
+
+    public static String hexToString(String hex) {
+        StringBuilder sb = new StringBuilder();
+        StringBuilder temp = new StringBuilder();
+
+        // 49204c6f7665204a617661 split into two characters 49, 20, 4c...
+        for (int i = 0; i < hex.length() - 1; i += 2) {
+
+            // grab the hex in pairs
+            String output = hex.substring(i, (i + 2));
+            // convert hex to decimal
+            int decimal = Integer.parseInt(output, 16);
+            // convert the decimal to character
+            sb.append((char) decimal);
+
+            temp.append(decimal);
+        }
+        return sb.toString();
     }
 
     public void getAddress(String requestId) {

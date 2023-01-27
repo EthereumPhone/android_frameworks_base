@@ -1,6 +1,5 @@
 package com.android.server;
 
-import geth.*;
 import com.android.server.SystemService;
 import android.content.Context;
 import android.util.Log;
@@ -15,7 +14,6 @@ import java.io.FileNotFoundException;
 public class GethService extends IGethService.Stub {
     private static final String TAG = "GethService";
     private static GethService instance;
-    private Node node;
     private String dataDir;
     private Process mainProcess;
     private ProcessBuilder builder;
@@ -25,7 +23,7 @@ public class GethService extends IGethService.Stub {
         dataDir = Environment.getDataDirectory().getAbsolutePath();
         Log.v(TAG, "GethNode, onCreate" + dataDir);
 
-        builder = new ProcessBuilder("./system/bin/helios");
+        builder = new ProcessBuilder("/system/bin/nimbus_verified_proxy", "--trusted-block-root=0x474053533033800a60b4676c5d7f36bd21ff7f193ee82fcc59a95a645c18406b", "--web3-url=https://eth-mainnet.g.alchemy.com/v2/wZcbHMBl1Gt4HaXho1M_-4ZcBNTEE0zM");
 
         // If file doesnt exist, create it
         if(!doesFileExist(dataDir+"/currentStatus.txt")) {

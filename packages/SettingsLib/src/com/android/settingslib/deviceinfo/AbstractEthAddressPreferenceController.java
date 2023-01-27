@@ -107,7 +107,7 @@ public abstract class AbstractEthAddressPreferenceController
                 String sessionId = (String) createSessionF.invoke(walletManager);
                 String requestId = (String) getAddressF.invoke(walletManager, sessionId);
 
-                Thread.sleep(1000);
+                Thread.sleep(100);
 
                 while (hasBeenFulfilled.invoke(walletManager, requestId).equals("notfulfilled")) {
                 }
