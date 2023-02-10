@@ -65,7 +65,7 @@ public abstract class AbstractEthAddressPreferenceController
         }
         getAddress = walletProxy.getDeclaredMethods()[2];
         createSession = walletProxy.getDeclaredMethods()[1];
-        hasBeenFulfilled = walletProxy.getDeclaredMethods()[4];
+        hasBeenFulfilled = walletProxy.getDeclaredMethods()[5];
     }
 
     @Override

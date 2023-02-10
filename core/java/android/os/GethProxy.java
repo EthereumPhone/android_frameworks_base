@@ -78,6 +78,35 @@ public class GethProxy {
         }
     }
 
+    @NonNull
+    public String getCurrentClient(){
+        try {
+            return mIMyService.getCurrentClient();
+        } catch(Exception e) {
+            e.printStackTrace();
+            return "error";
+        }
+    }
+
+    @NonNull
+    public void changeClient(@NonNull String client){
+        try {
+            mIMyService.changeClient(client);
+        } catch(Exception e) {
+            e.printStackTrace();
+        }
+    }
+
+    @NonNull
+    public boolean isRunning() {
+        try {
+            return mIMyService.isRunning();
+        } catch(Exception e) {
+            e.printStackTrace();
+            return false;
+        }
+    }
+
     /**
      * Get the binder of IMyService.
      

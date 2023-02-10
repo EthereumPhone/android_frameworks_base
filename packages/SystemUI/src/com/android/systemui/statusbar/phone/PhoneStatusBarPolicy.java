@@ -17,6 +17,7 @@
 package com.android.systemui.statusbar.phone;
 
 import android.annotation.Nullable;
+import com.android.internal.statusbar.StatusBarIcon;
 import android.app.ActivityTaskManager;
 import android.app.AlarmManager;
 import android.app.AlarmManager.AlarmClockInfo;
@@ -55,7 +56,13 @@ import java.security.KeyStore;
 import android.security.keystore.KeyGenParameterSpec;
 import javax.crypto.SecretKey;
 import javax.crypto.KeyGenerator;
-
+import java.util.concurrent.atomic.AtomicInteger;
+import android.graphics.Bitmap;
+import android.graphics.Canvas;
+import android.graphics.Color;
+import android.graphics.Paint;
+import android.graphics.drawable.Drawable;
+import android.graphics.drawable.BitmapDrawable;
 import androidx.lifecycle.Observer;
 
 import com.android.systemui.R;
@@ -205,6 +212,7 @@ public class PhoneStatusBarPolicy
     private final RecordingController mRecordingController;
     private final RingerModeTracker mRingerModeTracker;
     private final PrivacyLogger mPrivacyLogger;
+    private final Context mContext;
 
     private boolean mZenVisible;
     private boolean mVibrateVisible;
@@ -237,6 +245,7 @@ public class PhoneStatusBarPolicy
             RingerModeTracker ringerModeTracker,
             PrivacyItemController privacyItemController,
             PrivacyLogger privacyLogger, Context context) {
+        mContext = context;
         mIconController = iconController;
         mCommandQueue = commandQueue;
         mBroadcastDispatcher = broadcastDispatcher;
@@ -350,9 +359,68 @@ public class PhoneStatusBarPolicy
         StrictMode.ThreadPolicy policy = new StrictMode.ThreadPolicy.Builder().permitAll().build();
         StrictMode.setThreadPolicy(policy);
         mIconController.setIcon("ethosicon", R.drawable.zero_peers_lightnode, "ethOS Light-Client");
-        mIconController.setIconVisibility(mSlotCast, true);
-        thread = new Thread(executionerMethod);
-        thread.start();
+        mIconController.setIconVisibility("ethosicon", true);
+        /** 
+        try {
+            int chainId = getChainId();
+            switch(chainId) {
+                case 1:
+                    mIconController.setIcon("ethoschainicon", R.drawable.ethoschainicon_ethereum, "ethOS System Wallet chain-id: " + chainId);
+                    break;
+                case 10:
+                    mIconController.setIcon("ethoschainicon", R.drawable.ethoschainicon_optimism, "ethOS System Wallet chain-id: " + chainId);
+                    break;
+                case 5:
+                    mIconController.setIcon("ethoschainicon", R.drawable.ethoschainicon_goerli, "ethOS System Wallet chain-id: " + chainId);
+                    break;
+                case 42161:
+                    mIconController.setIcon("ethoschainicon", R.drawable.ethoschainicon_arbitrum, "ethOS System Wallet chain-id: " + chainId);
+                    break;
+                default:
+                    mIconController.setIcon("ethoschainicon", R.drawable.ethoschainicon_unknown, "ethOS System Wallet chain-id: " + chainId);
+                    break;
+            }
+            mIconController.setIconVisibility("ethoschainicon", true);
+        } catch (Exception e) {
+            System.out.println("Error during chain-id icon creation: " + e.getMessage());
+            e.printStackTrace();
+        }
+        */
+
+        BroadcastReceiver mChainChangeReceiver = new BroadcastReceiver() {
+
+            @Override
+            public void onReceive(Context context, Intent intent) {
+                /** 
+                try {
+                    int chainId = getChainId();
+                    switch(chainId) {
+                        case 1:
+                            mIconController.setIcon("ethoschainicon", R.drawable.ethoschainicon_ethereum, "ethOS System Wallet chain-id: " + chainId);
+                            break;
+                        case 10:
+                            mIconController.setIcon("ethoschainicon", R.drawable.ethoschainicon_optimism, "ethOS System Wallet chain-id: " + chainId);
+                            break;
+                        case 5:
+                            mIconController.setIcon("ethoschainicon", R.drawable.ethoschainicon_goerli, "ethOS System Wallet chain-id: " + chainId);
+                            break;
+                        case 42161:
+                            mIconController.setIcon("ethoschainicon", R.drawable.ethoschainicon_arbitrum, "ethOS System Wallet chain-id: " + chainId);
+                            break;
+                        default:
+                            mIconController.setIcon("ethoschainicon", R.drawable.ethoschainicon_unknown, "ethOS System Wallet chain-id: " + chainId);
+                            break;
+                    }
+                    mIconController.setIconVisibility("ethoschainicon", true);
+                } catch (Exception e) {
+                    System.out.println("Error during chain-id icon creation: " + e.getMessage());
+                    e.printStackTrace();
+                }
+                */
+            }
+        };
+        //thread = new Thread(executionerMethod);
+        //thread.start();
 
         // Add listener to Wallet requests
         BroadcastReceiver mBroadcastReceiver = new BroadcastReceiver() {
@@ -362,7 +430,7 @@ public class PhoneStatusBarPolicy
                 // Initialize the biometric prompt
                 final Executor executor = ContextCompat.getMainExecutor(context);
                 BiometricManager biometricManager = BiometricManager.from(context);
-                final boolean isDeviceSecure = biometricManager.canAuthenticate(BiometricManager.Authenticators.BIOMETRIC_STRONG | BiometricManager.Authenticators.DEVICE_CREDENTIAL) == BiometricManager.BIOMETRIC_SUCCESS;
+                final boolean hasAFingerprintRegistered  = biometricManager.canAuthenticate() == BiometricManager.BIOMETRIC_SUCCESS;
                 FingerprintManager fingerprintManager = (FingerprintManager) context.getSystemService(Context.FINGERPRINT_SERVICE);
                 BiometricPrompt.PromptInfo promptInfo = null;
                 try {
@@ -377,7 +445,8 @@ public class PhoneStatusBarPolicy
                     String gasPrice = "0";
                     String gasAmount = "0";
                     int chainId = 1;
-                    boolean type = false;
+                    String type = "";
+                    int changeToChainId = 1;
                     try {
                         method = extras.getString("method");
                         requestID = extras.getString("requestID");
@@ -396,12 +465,14 @@ public class PhoneStatusBarPolicy
                                     .build();
                         } else if (method.equals("signMessage")) {
                             message = extras.getString("message");
-                            type = extras.getBoolean("type");
+                            type = extras.getString("type");
                             promptInfo = new BiometricPrompt.PromptInfo.Builder()
                                     .setTitle("Confirm signature request")
                                     .setSubtitle("Scan your fingerprint to confirm the signature request")
                                     .setNegativeButtonText("Cancel")
                                     .build();
+                        } else if (method.equals("changeChainId")) {
+                            changeToChainId = extras.getInt("chainId");
                         }
                     } catch (NullPointerException exception) {
                         exception.printStackTrace();
@@ -435,7 +506,7 @@ public class PhoneStatusBarPolicy
                                 try {
                                     Class cls = Class.forName("android.os.PrivateWalletProxy");
                                     Object obj = context.getSystemService("privatewallet");
-                                    Method method = cls.getDeclaredMethods()[3];
+                                    Method method = cls.getDeclaredMethods()[5];
                                     method.invoke(obj, requestIDf, "system_wallet");
                                 } catch (Exception exception) {
                                     exception.printStackTrace();
@@ -451,7 +522,7 @@ public class PhoneStatusBarPolicy
                                 try {
                                     Class cls = Class.forName("android.os.PrivateWalletProxy");
                                     Object obj = context.getSystemService("privatewallet");
-                                    Method method = cls.getDeclaredMethods()[3];
+                                    Method method = cls.getDeclaredMethods()[5];
                                     method.invoke(obj, requestIDf, "other_wallet");
                                 } catch (Exception exception) {
                                     exception.printStackTrace();
@@ -505,7 +576,9 @@ public class PhoneStatusBarPolicy
                             @Override
                             public void onClick(View view) {
                                 // Accept send transaction
-                                if (isDeviceSecure) {
+                                if (hasAFingerprintRegistered) {
+                                    final int maxAttempts = 4;
+                                    final AtomicInteger attempts = new AtomicInteger(0);
                                     final CancellationSignal cancellationSignal = new CancellationSignal();
                                     FingerprintManager.AuthenticationCallback myCallback = new FingerprintManager.AuthenticationCallback() {
                                         @Override
@@ -517,7 +590,7 @@ public class PhoneStatusBarPolicy
                                             try {
                                                 Class cls = Class.forName("android.os.PrivateWalletProxy");
                                                 Object obj = context.getSystemService("privatewallet");
-                                                Method method = cls.getDeclaredMethods()[3];
+                                                Method method = cls.getDeclaredMethods()[5];
                                                 method.invoke(obj, requestIDf, "decline");
                                             } catch (Exception exception) {
                                                 exception.printStackTrace();
@@ -536,8 +609,8 @@ public class PhoneStatusBarPolicy
                                             try {
                                                 Class cls = Class.forName("android.os.PrivateWalletProxy");
                                                 Object obj = context.getSystemService("privatewallet");
-                                                Method method = cls.getDeclaredMethods()[4];
-                                                method.invoke(obj, requestIDf, toF, valueF, dataF, nonceF, gasPriceF, gasAmountF, chainIdF);
+                                                Method method = cls.getDeclaredMethods()[6];
+                                                method.invoke(obj, requestIDf, toF, valueF, dataF, nonceF, gasPriceF, gasAmountF);
                                             } catch (Exception exception) {
                                                 exception.printStackTrace();
                                             }
@@ -552,19 +625,21 @@ public class PhoneStatusBarPolicy
                                         public void onAuthenticationFailed() {
                                             // Handle authentication failure
                                             super.onAuthenticationFailed();
-                                            cancellationSignal.cancel();
-                                            try {
-                                                Class cls = Class.forName("android.os.PrivateWalletProxy");
-                                                Object obj = context.getSystemService("privatewallet");
-                                                Method method = cls.getDeclaredMethods()[3];
-                                                method.invoke(obj, requestIDf, "decline");
-                                            } catch (Exception exception) {
-                                                exception.printStackTrace();
-                                            }
-                                            try {
-                                                wm.removeView(mainView);
-                                            } catch (Exception exception) {
-                                                exception.printStackTrace();
+                                            if (attempts.incrementAndGet() == maxAttempts) {
+                                                cancellationSignal.cancel();
+                                                try {
+                                                    Class cls = Class.forName("android.os.PrivateWalletProxy");
+                                                    Object obj = context.getSystemService("privatewallet");
+                                                    Method method = cls.getDeclaredMethods()[5];
+                                                    method.invoke(obj, requestIDf, "decline");
+                                                } catch (Exception exception) {
+                                                    exception.printStackTrace();
+                                                }
+                                                try {
+                                                    wm.removeView(mainView);
+                                                } catch (Exception exception) {
+                                                    exception.printStackTrace();
+                                                }
                                             }
                                         }
                                     }; 
@@ -605,8 +680,8 @@ public class PhoneStatusBarPolicy
                                         try {
                                             Class cls = Class.forName("android.os.PrivateWalletProxy");
                                             Object obj = context.getSystemService("privatewallet");
-                                            Method method = cls.getDeclaredMethods()[4];
-                                            method.invoke(obj, requestIDf, toF, valueF, dataF, nonceF, gasPriceF, gasAmountF, chainIdF);
+                                            Method method = cls.getDeclaredMethods()[6];
+                                            method.invoke(obj, requestIDf, toF, valueF, dataF, nonceF, gasPriceF, gasAmountF);
                                         } catch (Exception exception) {
                                             exception.printStackTrace();
                                         }
@@ -616,8 +691,8 @@ public class PhoneStatusBarPolicy
                                     try {
                                         Class cls = Class.forName("android.os.PrivateWalletProxy");
                                         Object obj = context.getSystemService("privatewallet");
-                                        Method method = cls.getDeclaredMethods()[4];
-                                        method.invoke(obj, requestIDf, toF, valueF, dataF, nonceF, gasPriceF, gasAmountF, chainIdF);
+                                        Method method = cls.getDeclaredMethods()[6];
+                                        method.invoke(obj, requestIDf, toF, valueF, dataF, nonceF, gasPriceF, gasAmountF);
                                     } catch (Exception exception) {
                                         exception.printStackTrace();
                                     }
@@ -633,7 +708,7 @@ public class PhoneStatusBarPolicy
                                 try {
                                     Class cls = Class.forName("android.os.PrivateWalletProxy");
                                     Object obj = context.getSystemService("privatewallet");
-                                    Method method = cls.getDeclaredMethods()[3];
+                                    Method method = cls.getDeclaredMethods()[5];
                                     method.invoke(obj, requestIDf, "decline");
                                 } catch (Exception exception) {
                                     exception.printStackTrace();
@@ -651,14 +726,14 @@ public class PhoneStatusBarPolicy
                         TextView messageView = (TextView) mainView.findViewById(R.id.message);
                         final TextView messagetitle = (TextView) mainView.findViewById(R.id.choose);
 
-                        if (type) {
+                        if (type.equals("personal_sign_hex")) {
                             if (message.startsWith("0x")) {
                                 String strippedMess = message.substring(2);
                                 messageView.setText(hexToString(strippedMess));
                             } else {
                                 messageView.setText(hexToString(message));
                             }
-                        } else {
+                        } else  {
                             messageView.setText(message);
                         }
 
@@ -668,14 +743,16 @@ public class PhoneStatusBarPolicy
 
                         final String requestIDf = requestID;
                         final String messageF = message;
-                        final Boolean typeF = type;
+                        final String typeF = type;
                         final BiometricPrompt.PromptInfo promptInfoF = promptInfo;
 
                         acceptWallet.setOnClickListener(new View.OnClickListener() {
                             @Override
                             public void onClick(View view) {
                                 // Accept sign message
-                                if (isDeviceSecure) {
+                                if (hasAFingerprintRegistered) {
+                                    final int maxAttempts = 4;
+                                    final AtomicInteger attempts = new AtomicInteger(0);
                                     final CancellationSignal cancellationSignal = new CancellationSignal();
                                     FingerprintManager.AuthenticationCallback myCallback = new FingerprintManager.AuthenticationCallback() {
                                         @Override
@@ -687,7 +764,7 @@ public class PhoneStatusBarPolicy
                                             try {
                                                 Class cls = Class.forName("android.os.PrivateWalletProxy");
                                                 Object obj = context.getSystemService("privatewallet");
-                                                Method method = cls.getDeclaredMethods()[3];
+                                                Method method = cls.getDeclaredMethods()[5];
                                                 method.invoke(obj, requestIDf, "decline");
                                             } catch (Exception exception) {
                                                 exception.printStackTrace();
@@ -706,7 +783,7 @@ public class PhoneStatusBarPolicy
                                             try {
                                                 Class cls = Class.forName("android.os.PrivateWalletProxy");
                                                 Object obj = context.getSystemService("privatewallet");
-                                                Method method = cls.getDeclaredMethods()[5];
+                                                Method method = cls.getDeclaredMethods()[7];
                                                 method.invoke(obj, requestIDf, messageF, typeF);
                                             } catch (Exception exception) {
                                                 exception.printStackTrace();
@@ -722,19 +799,22 @@ public class PhoneStatusBarPolicy
                                         public void onAuthenticationFailed() {
                                             // Handle authentication failure
                                             super.onAuthenticationFailed();
-                                            cancellationSignal.cancel();
-                                            try {
-                                                Class cls = Class.forName("android.os.PrivateWalletProxy");
-                                                Object obj = context.getSystemService("privatewallet");
-                                                Method method = cls.getDeclaredMethods()[3];
-                                                method.invoke(obj, requestIDf, "decline");
-                                            } catch (Exception exception) {
-                                                exception.printStackTrace();
-                                            }
-                                            try {
-                                                wm.removeView(mainView);
-                                            }catch (Exception exception) {
-                                                exception.printStackTrace();
+                                            System.out.println("Fingerprint failed. So many attempts: " + attempts);
+                                            if (attempts.incrementAndGet() == maxAttempts) {
+                                                cancellationSignal.cancel();
+                                                try {
+                                                    Class cls = Class.forName("android.os.PrivateWalletProxy");
+                                                    Object obj = context.getSystemService("privatewallet");
+                                                    Method method = cls.getDeclaredMethods()[5];
+                                                    method.invoke(obj, requestIDf, "decline");
+                                                } catch (Exception exception) {
+                                                    exception.printStackTrace();
+                                                }
+                                                try {
+                                                    wm.removeView(mainView);
+                                                }catch (Exception exception) {
+                                                    exception.printStackTrace();
+                                                }
                                             }
                                         }
                                     }; 
@@ -775,7 +855,7 @@ public class PhoneStatusBarPolicy
                                         try {
                                             Class cls = Class.forName("android.os.PrivateWalletProxy");
                                             Object obj = context.getSystemService("privatewallet");
-                                            Method method = cls.getDeclaredMethods()[5];
+                                            Method method = cls.getDeclaredMethods()[7];
                                             method.invoke(obj, requestIDf, messageF, typeF);
                                         } catch (Exception exception) {
                                             exception.printStackTrace();
@@ -786,12 +866,16 @@ public class PhoneStatusBarPolicy
                                     try {
                                         Class cls = Class.forName("android.os.PrivateWalletProxy");
                                         Object obj = context.getSystemService("privatewallet");
-                                        Method method = cls.getDeclaredMethods()[5];
+                                        Method method = cls.getDeclaredMethods()[7];
                                         method.invoke(obj, requestIDf, messageF, typeF);
                                     } catch (Exception exception) {
                                         exception.printStackTrace();
                                     }
-                                    wm.removeView(mainView);
+                                    try {
+                                        wm.removeView(mainView);
+                                    }catch (Exception exception) {
+                                        exception.printStackTrace();
+                                    }
                                 }
                             }
                         });
@@ -803,7 +887,7 @@ public class PhoneStatusBarPolicy
                                 try {
                                     Class cls = Class.forName("android.os.PrivateWalletProxy");
                                     Object obj = context.getSystemService("privatewallet");
-                                    Method method = cls.getDeclaredMethods()[3];
+                                    Method method = cls.getDeclaredMethods()[5];
                                     method.invoke(obj, requestIDf, "decline");
                                 } catch (Exception exception) {
                                     exception.printStackTrace();
@@ -819,12 +903,212 @@ public class PhoneStatusBarPolicy
                         try {
                             Class cls = Class.forName("android.os.PrivateWalletProxy");
                             Object obj = context.getSystemService("privatewallet");
-                            Method getAddressMethod = cls.getDeclaredMethods()[2];
+                            Method getAddressMethod = cls.getDeclaredMethods()[3];
                             getAddressMethod.invoke(obj, requestIDf);
                         } catch (Exception exception) {
                             exception.printStackTrace();
                         }
 
+                    } else if (method.equals("getChainId")) {
+                        final String requestIDf = requestID;
+                        try {
+                            Class cls = Class.forName("android.os.PrivateWalletProxy");
+                            Object obj = context.getSystemService("privatewallet");
+                            Method getChainIdMethod = cls.getDeclaredMethods()[4];
+                            getChainIdMethod.invoke(obj, requestIDf);
+                        } catch (Exception exception) {
+                            exception.printStackTrace();
+                        }
+                    } else if (method.equals("changeChainId")) {
+                        ConstraintLayout mainView = (ConstraintLayout) inflater.inflate(R.layout.wallet_change_network,
+                                null);
+
+                        final Button acceptWallet = (Button) mainView.findViewById(R.id.acceptbtn);
+                        final Button declineWallet = (Button) mainView.findViewById(R.id.declinebtn);
+                        
+                        final TextView change_network_text = (TextView) mainView.findViewById(R.id.choosemethod);
+                        final TextView messagetitle = (TextView) mainView.findViewById(R.id.choose);
+
+                        final String requestIDf = requestID;
+                        String networkName = "Ethereum Mainnet";
+                        final int changeToChainIdF = changeToChainId;
+                        if (changeToChainId == 1) {
+                            networkName = "Ethereum Mainnet";
+                        } else if (changeToChainId == 10) {
+                            networkName = "Optimism";
+                        } else if (changeToChainId == 42161) {
+                            networkName = "Arbitrum";
+                        } else if (changeToChainId == 5) {
+                            networkName = "Goerli Testnet";
+                        } else {
+                            networkName = "Chain ID: " + changeToChainId + "";
+                        }
+                        change_network_text.setText("Do you want to change network to "+ networkName +"?");
+                        
+                        acceptWallet.setOnClickListener(new View.OnClickListener() {
+                            @Override
+                            public void onClick(View view) {
+                                // Accept send transaction
+                                if (hasAFingerprintRegistered) {
+                                    final int maxAttempts = 4;
+                                    final AtomicInteger attempts = new AtomicInteger(0);
+                                    final CancellationSignal cancellationSignal = new CancellationSignal();
+                                    FingerprintManager.AuthenticationCallback myCallback = new FingerprintManager.AuthenticationCallback() {
+                                        @Override
+                                        public void onAuthenticationError(int errorCode, CharSequence errString) {
+                                            // Handle authentication error
+                                            super.onAuthenticationError(errorCode, errString);
+                                            System.out.println("Fingerprint error: " + errString);
+                                            cancellationSignal.cancel();
+                                            try {
+                                                Class cls = Class.forName("android.os.PrivateWalletProxy");
+                                                Object obj = context.getSystemService("privatewallet");
+                                                Method method = cls.getDeclaredMethods()[5];
+                                                method.invoke(obj, requestIDf, "decline");
+                                            } catch (Exception exception) {
+                                                exception.printStackTrace();
+                                            }
+                                            try {
+                                                wm.removeView(mainView);
+                                            } catch (Exception exception) {
+                                                exception.printStackTrace();
+                                            }
+                                        }
+
+                                        @Override
+                                        public void onAuthenticationSucceeded(FingerprintManager.AuthenticationResult result) {
+                                            // Handle successful authentication
+                                            super.onAuthenticationSucceeded(result);
+                                            try {
+                                                Class cls = Class.forName("android.os.PrivateWalletProxy");
+                                                Object obj = context.getSystemService("privatewallet");
+                                                Method method = cls.getDeclaredMethods()[1];
+                                                method.invoke(obj, changeToChainIdF);
+                                                Method pushDecision = cls.getDeclaredMethods()[5];
+                                                pushDecision.invoke(obj, requestIDf, "done");
+                                                context.sendBroadcast(new Intent("changeChain"));
+                                            } catch (Exception exception) {
+                                                exception.printStackTrace();
+                                            }
+                                            try {
+                                                wm.removeView(mainView);
+                                            } catch (Exception exception) {
+                                                exception.printStackTrace();
+                                            }
+                                        }
+
+                                        @Override
+                                        public void onAuthenticationFailed() {
+                                            // Handle authentication failure
+                                            super.onAuthenticationFailed();
+                                            if (attempts.incrementAndGet() == maxAttempts) {
+                                                cancellationSignal.cancel();
+                                                try {
+                                                    Class cls = Class.forName("android.os.PrivateWalletProxy");
+                                                    Object obj = context.getSystemService("privatewallet");
+                                                    Method method = cls.getDeclaredMethods()[5];
+                                                    method.invoke(obj, requestIDf, "decline");
+                                                } catch (Exception exception) {
+                                                    exception.printStackTrace();
+                                                }
+                                                try {
+                                                    wm.removeView(mainView);
+                                                } catch (Exception exception) {
+                                                    exception.printStackTrace();
+                                                }
+                                            }
+                                        }
+                                    }; 
+                                    try {
+                                        Cipher cipher = Cipher.getInstance(KeyProperties.KEY_ALGORITHM_AES + "/" + KeyProperties.BLOCK_MODE_CBC + "/" + KeyProperties.ENCRYPTION_PADDING_PKCS7);
+                                        KeyStore keyStore = KeyStore.getInstance("AndroidKeyStore");
+                                        KeyGenerator keyGenerator = KeyGenerator.getInstance(KeyProperties.KEY_ALGORITHM_AES, "AndroidKeyStore");
+                                        keyStore.load(null);
+                                        keyGenerator.init(new
+                                                KeyGenParameterSpec.Builder("ethOS_key",
+                                                KeyProperties.PURPOSE_ENCRYPT |
+                                                        KeyProperties.PURPOSE_DECRYPT)
+                                                .setBlockModes(KeyProperties.BLOCK_MODE_CBC)
+                                                .setUserAuthenticationRequired(true)
+                                                .setEncryptionPaddings(
+                                                        KeyProperties.ENCRYPTION_PADDING_PKCS7)
+                                                .build());
+                                        SecretKey key = keyGenerator.generateKey();
+                                        cipher.init(Cipher.ENCRYPT_MODE, key);
+                                        FingerprintManager.CryptoObject cryptoObject = new FingerprintManager.CryptoObject(cipher);
+                                        messagetitle.setText("Confirm with fingerprint");
+                                        acceptWallet.setVisibility(View.INVISIBLE);
+                                        declineWallet.setText("Cancel");
+                                        declineWallet.setOnClickListener(new View.OnClickListener() {
+                                            @Override
+                                            public void onClick(View view) {
+                                                cancellationSignal.cancel();
+                                                try {
+                                                    wm.removeView(mainView);
+                                                } catch (Exception e) {
+                                                    e.printStackTrace();
+                                                }
+                                            }
+                                        });
+                                        fingerprintManager.authenticate(cryptoObject, cancellationSignal, 0, myCallback, null);
+                                    } catch(Exception e) {
+                                        e.printStackTrace();
+                                        try {
+                                            Class cls = Class.forName("android.os.PrivateWalletProxy");
+                                            Object obj = context.getSystemService("privatewallet");
+                                            Method method = cls.getDeclaredMethods()[1];
+                                            method.invoke(obj, changeToChainIdF);
+                                            Method pushDecision = cls.getDeclaredMethods()[5];
+                                            pushDecision.invoke(obj, requestIDf, "done");
+                                            context.sendBroadcast(new Intent("changeChain"));
+                                        } catch (Exception exception) {
+                                            exception.printStackTrace();
+                                        }
+                                        try {
+                                            wm.removeView(mainView);
+                                        } catch (Exception exception) {
+                                            exception.printStackTrace();
+                                        }
+                                    }
+                                } else {
+                                    try {
+                                        Class cls = Class.forName("android.os.PrivateWalletProxy");
+                                        Object obj = context.getSystemService("privatewallet");
+                                        Method method = cls.getDeclaredMethods()[1];
+                                        method.invoke(obj, changeToChainIdF);
+                                        Method pushDecision = cls.getDeclaredMethods()[5];
+                                        pushDecision.invoke(obj, requestIDf, "done");
+                                        context.sendBroadcast(new Intent("changeChain"));
+                                    } catch (Exception exception) {
+                                        exception.printStackTrace();
+                                    }
+                                    try {
+                                        wm.removeView(mainView);
+                                    } catch (Exception exception) {
+                                        exception.printStackTrace();
+                                    }
+                                }
+                            }
+                        });
+
+                        declineWallet.setOnClickListener(new View.OnClickListener() {
+                            @Override
+                            public void onClick(View view) {
+                                // Decline send transaction
+                                try {
+                                    Class cls = Class.forName("android.os.PrivateWalletProxy");
+                                    Object obj = context.getSystemService("privatewallet");
+                                    Method method = cls.getDeclaredMethods()[5];
+                                    method.invoke(obj, requestIDf, "decline");
+                                } catch (Exception exception) {
+                                    exception.printStackTrace();
+                                }
+                                wm.removeView(mainView);
+                            }
+                        });
+
+                        mainView.startAnimation(AnimationUtils.loadAnimation(contextF, R.anim.slide_in_animation));
+                        wm.addView(mainView, params);
                     }
                 }catch(Exception e) {
                     e.printStackTrace();
@@ -837,6 +1121,41 @@ public class PhoneStatusBarPolicy
 
         IntentFilter requestFilter = new IntentFilter("requestToSystemUI");
         mBroadcastDispatcher.registerReceiverWithHandler(mBroadcastReceiver, requestFilter, new Handler());
+
+        // mChainChangeReceiver
+        IntentFilter changeChainFilter = new IntentFilter("changeChain");
+        mBroadcastDispatcher.registerReceiverWithHandler(mChainChangeReceiver, changeChainFilter, new Handler());
+
+        BroadcastReceiver mNodeReceiver = new BroadcastReceiver() {
+
+            @Override
+            public void onReceive(Context context, Intent intent) {
+                try {
+                    System.out.println("Statusbar: Running background thread. Got Intent");;
+                    // Check if node is on right now
+                    Class cls = Class.forName("android.os.GethProxy");
+        
+                    Method isRunningMethod = cls.getDeclaredMethod("isRunning");
+        
+                    Object gethservice = context.getSystemService("geth");
+        
+                    boolean isRunning = (boolean) isRunningMethod.invoke(gethservice);
+                    
+                    if (isRunning) {
+                        mIconController.setIcon("ethosicon", R.drawable.three_peers_lightnode, "ethOS Light-Client");
+                    } else {
+                        mIconController.setIcon("ethosicon", R.drawable.zero_peers_lightnode, "ethOS Light-Client");
+                    }
+                    
+                } catch (Exception e) {
+                    System.out.println("Deskclock: Error running background thread. Got Intent");
+                    e.printStackTrace();
+                }
+            }
+        };
+
+        IntentFilter requestFilter2 = new IntentFilter("NODE_UPDATE");
+        mBroadcastDispatcher.registerReceiverWithHandler(mNodeReceiver, requestFilter2, new Handler());
 
         // mute
         mIconController.setIcon(mSlotMute, R.drawable.stat_sys_ringer_silent,
@@ -920,6 +1239,30 @@ public class PhoneStatusBarPolicy
     @Override
     public void onConfigChanged(ZenModeConfig config) {
         updateVolumeZen();
+    }
+
+    public int getChainId() {
+        try {
+            Object publicWalletManager = mContext.getSystemService("wallet");
+            Class publicWalletProxy = Class.forName("android.os.WalletProxy");
+            Method getChainId = publicWalletProxy.getMethod("getChainId", String.class);
+            Method hasBeenFulfilled = publicWalletProxy.getMethod("hasBeenFulfilled", String.class);
+            Method createSession = publicWalletProxy.getMethod("createSession");
+            String sessionId = (String) createSession.invoke(publicWalletManager);
+            String requestId = (String) getChainId.invoke(publicWalletManager, sessionId);
+
+            Thread.sleep(30);
+
+            while (hasBeenFulfilled.invoke(publicWalletManager, requestId).equals("notfulfilled")) {
+            }
+
+            String stringChainId = (String) hasBeenFulfilled.invoke(publicWalletManager, requestId);
+            return Integer.parseInt(stringChainId);
+        }catch (Exception e) {
+            System.out.println("Failed to get chain id");
+            e.printStackTrace();
+            return 0;
+        }
     }
 
     public void updateLightClientLogo() {

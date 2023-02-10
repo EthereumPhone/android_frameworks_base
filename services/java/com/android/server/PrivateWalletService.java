@@ -28,21 +28,23 @@ import java.security.Provider;
 import org.bouncycastle.jce.provider.BouncyCastleProvider;
 import java.security.Security;
 import java.io.FileWriter;
+import java.nio.ByteBuffer;
 
 public class PrivateWalletService extends IPrivateWalletService.Stub {
     private static final String TAG = "PrivateWalletService";
     private static WalletService instance;
     private String walletPath;
-    private ArrayList<String> allSessions;
-    private HashMap<String, String> allRequests;
     private String dataDir;
     private Credentials credentials;
     private Web3j web3j;
+    private int chainId = 1;
+    private SharedState sharedState;
 
-    public PrivateWalletService() {
+    public PrivateWalletService(SharedState sharedState) {
         super();
         Log.v(TAG, "PrivateWalletService, onCreate");
         dataDir = Environment.getDataDirectory().getAbsolutePath();
+        this.sharedState = sharedState;
         Provider provider = setupBouncyCastle();
         try {
             if (!doesWalletExist()) {
@@ -56,6 +58,19 @@ public class PrivateWalletService extends IPrivateWalletService.Stub {
                         "password",
                         walletPath);
             }
+            if (doesFileExist(dataDir+"savedChainId.txt")) {
+                Scanner myReader = new Scanner(new File(dataDir+"savedChainId.txt"));
+                while (myReader.hasNextLine()) {
+                    String data = myReader.nextLine();
+                    chainId = Integer.parseInt(data);
+                }
+                myReader.close();
+            } else {
+                File file = new File(dataDir, "savedChainId.txt");
+                FileWriter myWriter = new FileWriter(file);
+                myWriter.write(Integer.toString(chainId));
+                myWriter.close();
+            }
         } catch (Exception exception) {
             exception.printStackTrace();
         }
@@ -64,6 +79,11 @@ public class PrivateWalletService extends IPrivateWalletService.Stub {
 
         removeBouncyCastle(provider);
 
+    }
+
+    private boolean doesFileExist(String filePathString) {
+        File f = new File(filePathString);
+        return f.exists() && !f.isDirectory();
     }
 
     private Provider setupBouncyCastle() {
@@ -109,7 +129,6 @@ public class PrivateWalletService extends IPrivateWalletService.Stub {
         } catch (Exception exception) {
             exception.printStackTrace();
         }
-
     }
 
     public void createWallet() {
@@ -129,59 +148,109 @@ public class PrivateWalletService extends IPrivateWalletService.Stub {
         }
     }
 
+    public void getChainId(String requestId) {
+        sharedState.fulfillRequest(requestId, Integer.toString(chainId));
+    }
+
+    public void changeChainId(int chainId) {
+        this.chainId = chainId;
+        // Save chainId to file
+        savePreference(dataDir+"savedChainId.txt", chainId);
+    }
+
+    public void savePreference(String filename, int saveChainId) {
+        try {
+            FileWriter myWriter = new FileWriter(filename);
+            myWriter.write(Integer.toString(saveChainId));
+            myWriter.close();
+        } catch (IOException exception) {
+            exception.printStackTrace();
+        }
+    }
+
     public void pushDecision(String requestId, String response) {
-        loadDatabase();
-        allRequests.put(requestId, response);
-        saveDatabase();
+        sharedState.fulfillRequest(requestId, response);
     }
 
     public void sendTransaction(String requestId, String to, String value, String data, String nonce, String gasPrice,
-            String gasAmount, int chainId) {
+            String gasAmount) {
         try {
-            loadDatabase();
             RawTransaction rawTransaction = RawTransaction.createTransaction(
                     new BigInteger(nonce), new BigInteger(gasPrice), new BigInteger(gasAmount), to,
                     new BigInteger(value), data);
             byte[] signedMessage = TransactionEncoder.signMessage(rawTransaction, chainId, credentials);
             String hexValue = Numeric.toHexString(signedMessage);
-            allRequests.put(requestId, hexValue);
-            saveDatabase();
+            sharedState.fulfillRequest(requestId, hexValue);
         } catch (Exception exception) {
             exception.printStackTrace();
         }
-
     }
 
-    public void signMessage(String requestId, String message, boolean type) { // type = true for personal sign
-        loadDatabase();
-        
-        if (type) {
-            // Use personal_sign
-            byte[] messageBytes = hexToString(message.substring(2)).getBytes(StandardCharsets.UTF_8);
-            Sign.SignatureData signature = Sign.signPrefixedMessage(messageBytes, credentials.getEcKeyPair());
-            String r = Numeric.toHexString(signature.getR());
-            String s = Numeric.toHexString(signature.getS()).substring(2);
-            String v = Numeric.toHexString(signature.getV()).substring(2);
-            String hexValue = new StringBuilder(r).append(s).append(v).toString();
-            allRequests.put(requestId, hexValue);
-            saveDatabase();
-        } else {
-            // Use eth_sign
-            byte[] messageBytes = message.getBytes(StandardCharsets.UTF_8);
-
-            Sign.SignatureData signature = Sign.signPrefixedMessage(messageBytes, credentials.getEcKeyPair());
-
-            byte[] retval = new byte[65];
-            System.arraycopy(signature.getR(), 0, retval, 0, 32);
-            System.arraycopy(signature.getS(), 0, retval, 32, 32);
-            System.arraycopy(signature.getV(), 0, retval, 64, 1);
-
-            String signedMessage = Numeric.toHexString(retval);
-            allRequests.put(requestId, signedMessage);
-            saveDatabase();
+    public void signMessage(String requestId, String message, String type) { // type = true for personal sign
+        Log.v(TAG, "PrivateWalletService, signMessage. message: " + message + ", type: " + type + ", requestId: "
+                + requestId);
+        try {
+            if (type.equals("pesonal_sign_hex")) {
+                Log.v(TAG, "PrivateWalletService, signMessage, pesonal_sign_hex");
+                // Use personal_sign
+                byte[] messageBytes = hexToString(message.substring(2)).getBytes(StandardCharsets.UTF_8);
+                Sign.SignatureData signature = Sign.signPrefixedMessage(messageBytes, credentials.getEcKeyPair());
+                String r = Numeric.toHexString(signature.getR());
+                String s = Numeric.toHexString(signature.getS()).substring(2);
+                String v = Numeric.toHexString(signature.getV()).substring(2);
+                String hexValue = new StringBuilder(r).append(s).append(v).toString();
+                sharedState.fulfillRequest(requestId, hexValue);
+                Log.v(TAG, "PrivateWalletService, signMessage, pesonal_sign_hex, hexValue: " + hexValue);
+            } else if(type.equals("personal_sign")) {
+                // Sign using personal_sign
+    
+                byte[] messageBytes = message.getBytes(StandardCharsets.UTF_8);
+    
+                Sign.SignatureData signature = Sign.signPrefixedMessage(messageBytes, credentials.getEcKeyPair());
+    
+                byte[] retval = new byte[65];
+                System.arraycopy(signature.getR(), 0, retval, 0, 32);
+                System.arraycopy(signature.getS(), 0, retval, 32, 32);
+                System.arraycopy(signature.getV(), 0, retval, 64, 1);
+    
+                String signedMessage = Numeric.toHexString(retval);
+                sharedState.fulfillRequest(requestId, signedMessage);
+            } else if (type.equals("eth_signTypedData")) {
+                try {
+                    StructuredDataEncoder dataEncoder = new StructuredDataEncoder(message);
+                    byte[] hashStructuredData = dataEncoder.hashStructuredData();
+                    
+                    Sign.SignatureData signature = Sign.signMessage(hashStructuredData, credentials.getEcKeyPair(), false);
+    
+                    ByteBuffer sigBuffer = ByteBuffer.allocate(signature.getR().length + signature.getS().length + 1);
+                    sigBuffer.put(signature.getR());
+                    sigBuffer.put(signature.getS());
+                    sigBuffer.put(signature.getV());
+    
+                    String signedMessage = Numeric.toHexString(sigBuffer.array());
+    
+                    sharedState.fulfillRequest(requestId, signedMessage);
+                }catch (Exception e) {
+                    e.printStackTrace();
+                    sharedState.fulfillRequest(requestId, "error");
+                }
+                
+            }
+        } catch(Exception exception) {
+            exception.printStackTrace();
+            sharedState.fulfillRequest(requestId, "error");
         }
+    }
 
-        
+    public String signTypedData(String message) {
+        byte[] messageBytes = message.getBytes(StandardCharsets.UTF_8);
+        Sign.SignatureData signature = Sign.signPrefixedMessage(messageBytes, credentials.getEcKeyPair());
+        byte[] retval = new byte[65];
+        System.arraycopy(signature.getR(), 0, retval, 0, 32);
+        System.arraycopy(signature.getS(), 0, retval, 32, 32);
+        System.arraycopy(signature.getV(), 0, retval, 64, 1);
+        String signedMessage = Numeric.toHexString(retval);
+        return signedMessage;
     }
 
     public static String hexToString(String hex) {
@@ -204,47 +273,7 @@ public class PrivateWalletService extends IPrivateWalletService.Stub {
     }
 
     public void getAddress(String requestId) {
-        loadDatabase();
-        allRequests.put(requestId, Keys.toChecksumAddress(credentials.getAddress()));
-        saveDatabase();
-    }
-
-    public void saveDatabase() {
-        try {
-            FileOutputStream fos = new FileOutputStream(dataDir + "/mydb1.fil");
-            ObjectOutputStream oos = new ObjectOutputStream(fos);
-            oos.writeObject(allSessions);
-            oos.close();
-
-            FileOutputStream fos2 = new FileOutputStream(dataDir + "/mydb2.fil");
-            ObjectOutputStream oos2 = new ObjectOutputStream(fos2);
-            oos2.writeObject(allRequests);
-            oos2.close();
-        } catch (IOException ex) {
-            ex.printStackTrace();
-        }
-    }
-
-    public void loadDatabase() {
-        try {
-            FileInputStream fis = new FileInputStream(dataDir + "/mydb1.fil");
-            ObjectInputStream ois = new ObjectInputStream(fis);
-            allSessions = (ArrayList<String>) ois.readObject();
-            ois.close();
-
-            FileInputStream fis2 = new FileInputStream(dataDir + "/mydb2.fil");
-            ObjectInputStream ois2 = new ObjectInputStream(fis2);
-            allRequests = (HashMap<String, String>) ois2.readObject();
-            ois2.close();
-        } catch (IOException e) {
-            allSessions = new ArrayList<String>();
-            allRequests = new HashMap<String, String>();
-            e.printStackTrace();
-        } catch (ClassNotFoundException e) {
-            allSessions = new ArrayList<String>();
-            allRequests = new HashMap<String, String>();
-            e.printStackTrace();
-        }
+        sharedState.fulfillRequest(requestId, Keys.toChecksumAddress(credentials.getAddress()));
     }
 
 }

@@ -45,6 +45,13 @@ java_import {
 }
 
 java_import {
+    name: "web3j-abi",
+    host_supported: true,
+    installable: false,
+    jars: ["abi-4.9.5-SNAPSHOT.jar"],
+}
+
+java_import {
     name: "jackson-databind-2.13.4.2",
     host_supported: true,
     installable: false,
@@ -240,6 +247,7 @@ java_library {
         "web3j-core",
         "web3j-crypto",
         "web3j-utils",
+        "web3j-abi",
         "jackson-databind-2.13.4.2",
         "jackson-core-android-lib",
         "jackson-annotations-android-lib",

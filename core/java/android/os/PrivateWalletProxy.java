@@ -1,4 +1,6 @@
 package android.os;
+import java.lang.annotation.Native;
+
 /**
  * /framework/base/core/java/android/os/PrivateWalletProxy.java
  * This will be the private proxy only available to the system apps.
@@ -60,16 +62,16 @@ public class PrivateWalletProxy {
     }
 
     @NonNull
-    public void sendTransaction(@NonNull String requestId, @NonNull String to, @NonNull String value, @NonNull String data, @NonNull String nonce, @NonNull String gasPrice, @NonNull String gasAmount, @NonNull int chainId) {
+    public void sendTransaction(@NonNull String requestId, @NonNull String to, @NonNull String value, @NonNull String data, @NonNull String nonce, @NonNull String gasPrice, @NonNull String gasAmount) {
         try {
-            mIMyService.sendTransaction(requestId, to, value, data, nonce, gasPrice, gasAmount, chainId);
+            mIMyService.sendTransaction(requestId, to, value, data, nonce, gasPrice, gasAmount);
         } catch(Exception e) {
             e.printStackTrace();
         }
     }
 
     @NonNull
-    public void signMessage(@NonNull String requestId, @NonNull String message, @NonNull boolean type)  {
+    public void signMessage(@NonNull String requestId, @NonNull String message, @NonNull String type)  {
         try {
             mIMyService.signMessage(requestId, message, type);
         } catch(Exception e) {
@@ -81,6 +83,24 @@ public class PrivateWalletProxy {
     public void getAddress(@NonNull String requestId) {
         try {
             mIMyService.getAddress(requestId);
+        } catch(Exception e) {
+            e.printStackTrace();
+        }
+    }
+
+    @NonNull
+    public void getChainId(@NonNull String requestId) {
+        try {
+            mIMyService.getChainId(requestId);
+        } catch(Exception e) {
+            e.printStackTrace();
+        }
+    }
+
+    @NonNull
+    public void changeChainId(@NonNull int chainId) {
+        try {
+            mIMyService.changeChainId(chainId);
         } catch(Exception e) {
             e.printStackTrace();
         }

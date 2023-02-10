@@ -10,6 +10,10 @@ import java.io.FileWriter;
 import java.util.Scanner;
 import java.io.IOException;
 import java.io.FileNotFoundException;
+import android.content.Intent;
+import java.io.InputStream;
+import java.io.InputStreamReader;
+import java.io.BufferedReader;
 
 public class GethService extends IGethService.Stub {
     private static final String TAG = "GethService";
@@ -17,13 +21,20 @@ public class GethService extends IGethService.Stub {
     private String dataDir;
     private Process mainProcess;
     private ProcessBuilder builder;
+    private final String[] nimbusCommand = {"/system/bin/nimbus_verified_proxy", "--trusted-block-root=0x474053533033800a60b4676c5d7f36bd21ff7f193ee82fcc59a95a645c18406b", "--web3-url=https://eth-mainnet.g.alchemy.com/v2/wZcbHMBl1Gt4HaXho1M_-4ZcBNTEE0zM"};
+    private final String heliosCommand = "./system/bin/helios";
+    private String currentCommand = "nimbus";
+    private Context context;
+    private Thread standardOutputThread;
+    private Thread errorOutputThread;
 
-    public GethService() {
+    public GethService(Context con) {
         super();
         dataDir = Environment.getDataDirectory().getAbsolutePath();
         Log.v(TAG, "GethNode, onCreate" + dataDir);
+        this.context = con;
 
-        builder = new ProcessBuilder("/system/bin/nimbus_verified_proxy", "--trusted-block-root=0x474053533033800a60b4676c5d7f36bd21ff7f193ee82fcc59a95a645c18406b", "--web3-url=https://eth-mainnet.g.alchemy.com/v2/wZcbHMBl1Gt4HaXho1M_-4ZcBNTEE0zM");
+        builder = new ProcessBuilder(nimbusCommand);
 
         // If file doesnt exist, create it
         if(!doesFileExist(dataDir+"/currentStatus.txt")) {
@@ -42,6 +53,7 @@ public class GethService extends IGethService.Stub {
             // Setting Verbosity to 4 to see what is happening
             try {
                 mainProcess = builder.start();
+                redirectProcessOutput(mainProcess);
             } catch (Exception e) {
                 e.printStackTrace();
             }
@@ -53,6 +65,41 @@ public class GethService extends IGethService.Stub {
         
     }
 
+    public void redirectProcessOutput(Process process) {
+        InputStream inputStream = process.getInputStream();
+        InputStreamReader reader = new InputStreamReader(inputStream);
+        BufferedReader buffer = new BufferedReader(reader);
+      
+        standardOutputThread = new Thread(() -> {
+          try {
+            String line;
+            while ((line = buffer.readLine()) != null) {
+              System.out.println(TAG +": " +line);
+            }
+          } catch (IOException e) {
+            e.printStackTrace();
+          }
+        });
+        standardOutputThread.start();
+      
+        InputStream errorStream = process.getErrorStream();
+        InputStreamReader errorReader = new InputStreamReader(errorStream);
+        BufferedReader errorBuffer = new BufferedReader(errorReader);
+      
+        errorOutputThread = new Thread(() -> {
+          try {
+            String line;
+            while ((line = errorBuffer.readLine()) != null) {
+                System.out.println(TAG +": " +line);
+            }
+          } catch (IOException e) {
+            e.printStackTrace();
+          }
+        });
+        errorOutputThread.start();
+    }
+    
+
     public String getEnodeURL() {
         return "";
     }
@@ -62,6 +109,7 @@ public class GethService extends IGethService.Stub {
         if (mainProcess != null) {
             mainProcess.destroy();
             mainProcess = null;
+            updateViews();
         }
         Log.v(TAG, "GethNode, successfully stopped :)");
     }
@@ -70,6 +118,7 @@ public class GethService extends IGethService.Stub {
         if (mainProcess != null) {
             mainProcess.destroy();
             mainProcess = null;
+            updateViews();
         }
         Log.v(TAG, "GethNode, successfully stopped. Without preferences :)");
     }
@@ -78,6 +127,8 @@ public class GethService extends IGethService.Stub {
         try {
             if (mainProcess == null) {
                 mainProcess = builder.start();
+                redirectProcessOutput(mainProcess);
+                updateViews();
             }
         } catch (Exception e) {
             e.printStackTrace();
@@ -123,6 +174,25 @@ public class GethService extends IGethService.Stub {
         return true;
     }
 
+    public void changeClient(String client) {
+        if (mainProcess != null) {
+            mainProcess.destroy();
+            mainProcess = null;
+            updateViews();
+        }
+        if (client.equals("Nimbus")) {
+            builder = new ProcessBuilder(nimbusCommand);
+            currentCommand = "Nimbus";
+        } else if (client.equals("Helios")) {
+            builder = new ProcessBuilder(heliosCommand);
+            currentCommand = "Helios";
+        }
+    }
+
+    public String getCurrentClient() {
+        return currentCommand;
+    }
+
     public void savePreference(String filename, boolean preference) {
         try {
             FileWriter myWriter = new FileWriter(filename);
@@ -135,7 +205,18 @@ public class GethService extends IGethService.Stub {
         } catch (IOException exception) {
             exception.printStackTrace();
         }
+    }
 
+    public boolean isRunning() {
+        if (mainProcess != null) {
+            return mainProcess.isAlive();
+        }
+        return false;
+    }
+
+    private void updateViews() {
+        Intent intent = new Intent("NODE_UPDATE");
+        context.sendBroadcast(intent);
     }
 
 }

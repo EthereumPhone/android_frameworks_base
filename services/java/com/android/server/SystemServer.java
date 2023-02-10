@@ -227,6 +227,7 @@ import java.util.concurrent.Future;
 import com.android.server.GethService;
 import com.android.server.WalletService;
 import com.android.server.PrivateWalletService;
+import com.android.server.SharedState;
 
 
 /**
@@ -1246,16 +1247,19 @@ public final class SystemServer implements Dumpable {
 
 	    try {
             t.traceBegin("GethService");
-            GethService gethService = new GethService();
+            GethService gethService = new GethService(mSystemContext);
             ServiceManager.addService("geth", gethService);
             t.traceEnd();
         } catch (Throwable e) {
             Slog.e("System", "Failed starting GethNode", e);
         }
 
+        // Creating shared state for WalletService and PrivateWalletService
+        SharedState sharedState = new SharedState();
+
         try {
             t.traceBegin("WalletService");
-            WalletService walletService = new WalletService(mSystemContext);
+            WalletService walletService = new WalletService(mSystemContext, sharedState);
             ServiceManager.addService("wallet", walletService);
             t.traceEnd();
         } catch (Throwable e) {
@@ -1265,7 +1269,7 @@ public final class SystemServer implements Dumpable {
         // Private WalletService
         try {
             t.traceBegin("PrivateWalletService");
-            PrivateWalletService privateWalletService = new PrivateWalletService();
+            PrivateWalletService privateWalletService = new PrivateWalletService(sharedState);
             ServiceManager.addService("privatewallet", privateWalletService);
             t.traceEnd();
         } catch (Throwable e) {

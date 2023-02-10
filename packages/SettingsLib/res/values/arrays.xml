@@ -86,6 +86,28 @@
         <item>Always check</item>
     </string-array>
 
+    <!-- Values for Eth chain preference. -->
+    <string-array name="eth_chain_array_titles">
+        <item>Ethereum Mainnet</item>
+        <item>Optimism</item>
+        <item>Arbitrum One</item>
+        <item>Goerli Testnet</item>
+    </string-array>
+
+    <string-array name="eth_chain_array_summaries">
+        <item>Ethereum Mainnet</item>
+        <item>Optimism</item>
+        <item>Arbitrum One</item>
+        <item>Goerli Testnet</item>
+    </string-array>
+
+    <string-array name="eth_chain_array_values">
+        <item>ethereum</item>
+        <item>optimism</item>
+        <item>arbitrum</item>
+        <item>goerli</item>
+    </string-array>
+
     <!-- Values for HDCP checking preference. -->
     <string-array name="hdcp_checking_values" translatable="false" >
         <item>never</item>

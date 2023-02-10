@@ -11,4 +11,7 @@ interface IGethService {
     void shutdownGeth();
     void startGeth();
     void shutdownWithoutPreference();
+    void changeClient(String client);
+    String getCurrentClient();
+    boolean isRunning();
 }

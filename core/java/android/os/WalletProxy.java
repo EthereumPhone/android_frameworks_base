@@ -7,6 +7,7 @@ package android.os;
  */
 import android.annotation.NonNull;
 import android.util.Log;
+import java.util.Arrays;
 public class WalletProxy {
     private static final String TAG = "WalletProxy";
     private static WalletProxy myProxy;
@@ -62,7 +63,7 @@ public class WalletProxy {
     }
 
     @NonNull
-    public String signMessage(@NonNull String session, @NonNull String message, @NonNull boolean type) {
+    public String signMessage(@NonNull String session, @NonNull String message, @NonNull String type) {
         try {
             return mIMyService.signMessage(session, message, type);
         } catch(Exception e) {
@@ -95,6 +96,26 @@ public class WalletProxy {
     public String getAddress(@NonNull String session) {
         try {
             return mIMyService.getAddress(session);
+        } catch(Exception e) {
+            e.printStackTrace();
+            return "error";
+        }
+    }
+
+    @NonNull
+    public String getChainId(@NonNull String session) {
+        try {
+            return mIMyService.getChainId(session);
+        } catch(Exception e) {
+            e.printStackTrace();
+            return "error";
+        }
+    }
+
+    @NonNull
+    public String changeChainId(@NonNull String session, @NonNull int chainId) {
+        try {
+            return mIMyService.changeChainId(session, chainId);
         } catch(Exception e) {
             e.printStackTrace();
             return "error";
