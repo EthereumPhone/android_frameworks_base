@@ -546,7 +546,8 @@ public class PhoneStatusBarPolicy
                         TextView gasAmountView = (TextView) mainView.findViewById(R.id.textView9);
                         TextView totalAmount = (TextView) mainView.findViewById(R.id.ethamount_sign);
                         TextView chainIdTextView = (TextView) mainView.findViewById(R.id.chainIdTextView);
-
+                        // Change to actual chainId
+                        chainId = getChainId();
                         chainIdTextView.setText(chainId+"");
 
                         toAddrView.setText(toAddr);
