@@ -63,9 +63,9 @@ public abstract class AbstractEthAddressPreferenceController
             classNotFoundException.printStackTrace();
             walletProxy = null;
         }
-        getAddress = walletProxy.getDeclaredMethods()[2];
-        createSession = walletProxy.getDeclaredMethods()[1];
-        hasBeenFulfilled = walletProxy.getDeclaredMethods()[5];
+        getAddress = walletProxy.getDeclaredMethods()[3];
+        createSession = walletProxy.getDeclaredMethods()[2];
+        hasBeenFulfilled = walletProxy.getDeclaredMethods()[6];
     }
 
     @Override
