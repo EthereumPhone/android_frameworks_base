@@ -105,5 +105,15 @@ public class PrivateWalletProxy {
             e.printStackTrace();
         }
     }
+
+    @NonNull
+    public int directGetChainId() {
+        try {
+            return mIMyService.directGetChainId();
+        } catch(Exception e) {
+            e.printStackTrace();
+        }
+        return 0;
+    }
    
 }
