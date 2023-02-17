@@ -646,7 +646,8 @@ internal object SubtitleArrayMapping {
         "mictoggle" to R.array.tile_states_mictoggle,
         "controls" to R.array.tile_states_controls,
         "wallet" to R.array.tile_states_wallet,
-        "alarm" to R.array.tile_states_alarm
+        "alarm" to R.array.tile_states_alarm,
+        "chain" to R.array.tile_states_chain,
     )
 
     fun getSubtitleId(spec: String?): Int {
