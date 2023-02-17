@@ -54,18 +54,31 @@
             app:layout_constraintStart_toStartOf="@+id/guideline"
             app:layout_constraintTop_toBottomOf="@+id/choose" />
 
-        <TextView
-            android:id="@+id/message"
+        <ScrollView
             android:layout_width="0dp"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="8dp"
-            android:text="0x95abDa53Bc5E9fBBDce34603614018d32CED219e "
-            android:textAlignment="viewStart"
-            android:textColor="@color/ethOS_white"
-            android:textSize="14sp"
+            android:layout_height="0dp"
+            app:layout_constraintBottom_toTopOf="@+id/acceptbtn"
             app:layout_constraintEnd_toStartOf="@+id/guideline2"
-            app:layout_constraintStart_toStartOf="@+id/messagetitle"
-            app:layout_constraintTop_toBottomOf="@+id/messagetitle" />
+            app:layout_constraintStart_toStartOf="@+id/guideline"
+            app:layout_constraintTop_toBottomOf="@+id/messagetitle"
+            android:fillViewport="true">
+
+            <TextView
+                android:id="@+id/message"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="8dp"
+                android:paddingBottom="16dp"
+                android:text=" "
+                android:textAlignment="viewStart"
+                android:textColor="@color/ethOS_white"
+                android:textSize="14sp"
+                app:layout_constraintEnd_toStartOf="@+id/guideline2"
+                app:layout_constraintStart_toStartOf="@+id/messagetitle"
+                app:layout_constraintTop_toBottomOf="@+id/messagetitle" />
+        </ScrollView>
+
+
 
         <androidx.constraintlayout.widget.Guideline android:id="@+id/guideline" android:layout_width="wrap_content" android:layout_height="wrap_content" android:orientation="vertical" app:layout_constraintGuide_begin="32dp" />
 
