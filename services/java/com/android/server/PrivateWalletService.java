@@ -39,12 +39,14 @@ public class PrivateWalletService extends IPrivateWalletService.Stub {
     private Web3j web3j;
     private int chainId = 1;
     private SharedState sharedState;
+    private Context mContext;
 
-    public PrivateWalletService(SharedState sharedState) {
+    public PrivateWalletService(SharedState sharedState, Context context) {
         super();
         Log.v(TAG, "PrivateWalletService, onCreate");
         dataDir = Environment.getDataDirectory().getAbsolutePath();
         this.sharedState = sharedState;
+        this.mContext = context;
         Provider provider = setupBouncyCastle();
         try {
             if (!doesWalletExist()) {
@@ -152,10 +154,16 @@ public class PrivateWalletService extends IPrivateWalletService.Stub {
         sharedState.fulfillRequest(requestId, Integer.toString(chainId));
     }
 
+    public int directGetChainId() {
+        return chainId;
+    }
+
     public void changeChainId(int chainId) {
         this.chainId = chainId;
         // Save chainId to file
         savePreference(dataDir+"savedChainId.txt", chainId);
+        Intent intent = new Intent("changeChain");
+        mContext.sendBroadcast(intent);
     }
 
     public void savePreference(String filename, int saveChainId) {

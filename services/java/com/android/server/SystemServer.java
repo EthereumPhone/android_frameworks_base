@@ -1269,7 +1269,7 @@ public final class SystemServer implements Dumpable {
         // Private WalletService
         try {
             t.traceBegin("PrivateWalletService");
-            PrivateWalletService privateWalletService = new PrivateWalletService(sharedState);
+            PrivateWalletService privateWalletService = new PrivateWalletService(sharedState, mSystemContext);
             ServiceManager.addService("privatewallet", privateWalletService);
             t.traceEnd();
         } catch (Throwable e) {
