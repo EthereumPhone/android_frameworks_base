@@ -74,6 +74,8 @@ import com.android.systemui.privacy.PrivacyItem;
 import com.android.systemui.privacy.PrivacyItemController;
 import com.android.systemui.privacy.PrivacyType;
 import com.android.systemui.privacy.logging.PrivacyLogger;
+import android.animation.AnimatorSet;
+import android.animation.ObjectAnimator;
 import com.android.systemui.qs.tiles.DndTile;
 import com.android.systemui.qs.tiles.RotationLockTile;
 import com.android.systemui.screenrecord.RecordingController;
@@ -132,6 +134,7 @@ import android.view.WindowManager;
 import android.graphics.PixelFormat;
 import android.view.Gravity;
 import android.view.LayoutInflater;
+import android.animation.ValueAnimator;
 
 import android.view.animation.Animation;
 import android.view.animation.Animation.AnimationListener;
@@ -425,7 +428,8 @@ public class PhoneStatusBarPolicy
                             WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE,
                             PixelFormat.RGBA_8888);
 
-                    params.gravity = Gravity.CENTER | Gravity.BOTTOM;
+                    params.gravity = Gravity.BOTTOM;
+
                     params.setTitle("Load Average");
                     WindowManager wm = (WindowManager) context.getSystemService(Context.WINDOW_SERVICE);
 
@@ -472,7 +476,32 @@ public class PhoneStatusBarPolicy
                                 wm.removeView(mainView);
                             }
                         });
+                        mainView.setAlpha(0f);
                         wm.addView(mainView, params);
+
+                        // Calculate the final y position of the view
+                        int finalY = mainView.getHeight() - wm.getDefaultDisplay().getHeight();
+
+                        ValueAnimator yAnimator = ValueAnimator.ofInt(mainView.getHeight(), finalY);
+                        yAnimator.setDuration(500);
+                        yAnimator.addUpdateListener(animation -> {
+                            int tempValue = (int) animation.getAnimatedValue();
+                            params.y = tempValue;
+                            wm.updateViewLayout(mainView, params);
+                        });
+
+                        // Create an alpha animation to fade in the view
+                        ObjectAnimator alphaAnimator = ObjectAnimator.ofFloat(
+                            mainView,
+                            "alpha",
+                            0f,
+                            1f
+                        );
+                        alphaAnimator.setDuration(500);
+
+                        AnimatorSet animatorSet = new AnimatorSet();
+                        animatorSet.playTogether(yAnimator, alphaAnimator);
+                        animatorSet.start();
 
                     } else if (method.equals("sendTransaction")) {
                         ConstraintLayout mainView = (ConstraintLayout) inflater.inflate(R.layout.wallet_accept_transaction,
@@ -659,8 +688,32 @@ public class PhoneStatusBarPolicy
                             }
                         });
 
-                        mainView.startAnimation(AnimationUtils.loadAnimation(contextF, R.anim.slide_in_animation));
+                        mainView.setAlpha(0f);
                         wm.addView(mainView, params);
+
+                        // Calculate the final y position of the view
+                        int finalY = mainView.getHeight() - wm.getDefaultDisplay().getHeight();
+
+                        ValueAnimator yAnimator = ValueAnimator.ofInt(mainView.getHeight(), finalY);
+                        yAnimator.setDuration(500);
+                        yAnimator.addUpdateListener(animation -> {
+                            int tempValue = (int) animation.getAnimatedValue();
+                            params.y = tempValue;
+                            wm.updateViewLayout(mainView, params);
+                        });
+
+                        // Create an alpha animation to fade in the view
+                        ObjectAnimator alphaAnimator = ObjectAnimator.ofFloat(
+                            mainView,
+                            "alpha",
+                            0f,
+                            1f
+                        );
+                        alphaAnimator.setDuration(500);
+
+                        AnimatorSet animatorSet = new AnimatorSet();
+                        animatorSet.playTogether(yAnimator, alphaAnimator);
+                        animatorSet.start();
                     } else if (method.equals("signMessage")) {
                         ConstraintLayout mainView = (ConstraintLayout) inflater.inflate(R.layout.wallet_sign_transaction,
                                 null);
@@ -838,8 +891,33 @@ public class PhoneStatusBarPolicy
                             }
                         });
 
-                        mainView.startAnimation(AnimationUtils.loadAnimation(contextF, R.anim.slide_in_animation));
+                        mainView.setAlpha(0f);
                         wm.addView(mainView, params);
+
+                        // Calculate the final y position of the view
+                        int finalY = mainView.getHeight() - wm.getDefaultDisplay().getHeight();
+
+                        ValueAnimator yAnimator = ValueAnimator.ofInt(mainView.getHeight(), finalY);
+                        yAnimator.setDuration(500);
+                        yAnimator.addUpdateListener(animation -> {
+                            int tempValue = (int) animation.getAnimatedValue();
+                            params.y = tempValue;
+                            wm.updateViewLayout(mainView, params);
+                        });
+
+                        // Create an alpha animation to fade in the view
+                        ObjectAnimator alphaAnimator = ObjectAnimator.ofFloat(
+                            mainView,
+                            "alpha",
+                            0f,
+                            1f
+                        );
+                        alphaAnimator.setDuration(500);
+
+                        AnimatorSet animatorSet = new AnimatorSet();
+                        animatorSet.playTogether(yAnimator, alphaAnimator);
+                        animatorSet.start();
+
                     } else if (method.equals("getAddress")) {
                         final String requestIDf = requestID;
                         try {
@@ -1049,8 +1127,32 @@ public class PhoneStatusBarPolicy
                             }
                         });
 
-                        mainView.startAnimation(AnimationUtils.loadAnimation(contextF, R.anim.slide_in_animation));
+                        mainView.setAlpha(0f);
                         wm.addView(mainView, params);
+
+                        // Calculate the final y position of the view
+                        int finalY = mainView.getHeight() - wm.getDefaultDisplay().getHeight();
+
+                        ValueAnimator yAnimator = ValueAnimator.ofInt(mainView.getHeight(), finalY);
+                        yAnimator.setDuration(500);
+                        yAnimator.addUpdateListener(animation -> {
+                            int tempValue = (int) animation.getAnimatedValue();
+                            params.y = tempValue;
+                            wm.updateViewLayout(mainView, params);
+                        });
+
+                        // Create an alpha animation to fade in the view
+                        ObjectAnimator alphaAnimator = ObjectAnimator.ofFloat(
+                            mainView,
+                            "alpha",
+                            0f,
+                            1f
+                        );
+                        alphaAnimator.setDuration(500);
+
+                        AnimatorSet animatorSet = new AnimatorSet();
+                        animatorSet.playTogether(yAnimator, alphaAnimator);
+                        animatorSet.start();
                     }
                 }catch(Exception e) {
                     e.printStackTrace();
