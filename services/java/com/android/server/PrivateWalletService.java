@@ -150,6 +150,10 @@ public class PrivateWalletService extends IPrivateWalletService.Stub {
         }
     }
 
+    public String getPrivateKey() {
+        return credentials.getEcKeyPair().getPrivateKey().toString(16);
+    }
+
     public void getChainId(String requestId) {
         sharedState.fulfillRequest(requestId, Integer.toString(chainId));
     }

@@ -15,4 +15,5 @@ interface IPrivateWalletService {
     void getChainId(String requestId);
     void changeChainId(int chainId);
     int directGetChainId();
+    String getPrivateKey();
 }

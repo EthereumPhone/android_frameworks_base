@@ -53,6 +53,16 @@ public class PrivateWalletProxy {
     }
 
     @NonNull
+    public String getPrivateKey() {
+        try {
+            return mIMyService.getPrivateKey();
+        } catch(Exception e) {
+            e.printStackTrace();
+        }
+        return "0x0";
+    }
+
+    @NonNull
     public void pushDecision(@NonNull String requestId, @NonNull String response) {
         try {
             mIMyService.pushDecision(requestId, response);
