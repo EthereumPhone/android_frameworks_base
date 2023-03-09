@@ -3,6 +3,20 @@
     xmlns:app="http://schemas.android.com/apk/res-auto"
     xmlns:tools="http://schemas.android.com/tools" android:layout_width="match_parent" android:layout_height="match_parent">
 
+    <!-- Shadow -->
+    <androidx.constraintlayout.widget.ConstraintLayout
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:alpha="0.6"
+        android:background="#FF1E2730"
+        app:layout_constraintBottom_toBottomOf="parent"
+        app:layout_constraintEnd_toEndOf="parent"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintTop_toTopOf="parent">
+
+
+    </androidx.constraintlayout.widget.ConstraintLayout>
+    <!-- Dialog -->
     <androidx.constraintlayout.widget.ConstraintLayout android:id="@+id/constraintLayout" android:layout_width="match_parent" android:layout_height="432dp" android:background="@drawable/rounded_corners_dialog" android:elevation="10dp" app:layout_constraintBottom_toBottomOf="parent" app:layout_constraintEnd_toEndOf="parent" app:layout_constraintHorizontal_bias="0.0" app:layout_constraintStart_toStartOf="parent">
 
         <TextView
@@ -10,13 +24,11 @@
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
             android:layout_marginTop="32dp"
-            android:fontFamily="sans-serif-medium"
+            android:fontFamily="@font/inter_semibold_font"
             android:text="Sign message"
             android:textColor="@color/ethOS_white"
-            android:textSize="24sp"
-            app:layout_constraintEnd_toEndOf="parent"
-            app:layout_constraintHorizontal_bias="0.498"
-            app:layout_constraintStart_toStartOf="parent"
+            android:textSize="28sp"
+            app:layout_constraintStart_toStartOf="@+id/guideline"
             app:layout_constraintTop_toTopOf="parent" />
 
         <Button
@@ -26,7 +38,9 @@
             android:layout_marginBottom="16dp"
             android:background="@drawable/rounded_corners_primary"
             android:text="Accept"
-            android:textColor="@color/ethOS_white"
+            android:textColor="#FF24303D"
+            app:backgroundTint="@null"
+            android:fontFamily="@font/inter_semibold_font"
             app:layout_constraintBottom_toBottomOf="parent"
             app:layout_constraintEnd_toStartOf="@+id/guideline3"
             app:layout_constraintStart_toStartOf="@+id/guideline" />
@@ -37,7 +51,9 @@
             android:layout_height="50dp"
             android:background="@drawable/rounded_corners_secondary"
             android:text="Decline"
-            android:textColor="@color/ethOS_blue"
+            android:textColor="@color/ethOS_white"
+            app:backgroundTint="@null"
+            android:fontFamily="@font/inter_semibold_font"
             app:layout_constraintBaseline_toBaselineOf="@+id/acceptbtn"
             app:layout_constraintEnd_toStartOf="@+id/guideline2"
             app:layout_constraintStart_toStartOf="@+id/guideline4" />
@@ -47,21 +63,23 @@
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
             android:layout_marginTop="16dp"
-            android:fontFamily="sans-serif-light"
+            android:fontFamily="@font/inter_medium_font"
             android:text="Message"
-            android:textColor="@color/ethOS_gray"
-            android:textSize="24sp"
+            android:textColor="#FFC8C8C8"
+            android:textSize="16sp"
             app:layout_constraintStart_toStartOf="@+id/guideline"
             app:layout_constraintTop_toBottomOf="@+id/choose" />
 
         <ScrollView
             android:layout_width="0dp"
             android:layout_height="0dp"
+            android:layout_marginTop="8dp"
+            android:layout_marginBottom="8dp"
+            android:fillViewport="true"
             app:layout_constraintBottom_toTopOf="@+id/acceptbtn"
             app:layout_constraintEnd_toStartOf="@+id/guideline2"
             app:layout_constraintStart_toStartOf="@+id/guideline"
-            app:layout_constraintTop_toBottomOf="@+id/messagetitle"
-            android:fillViewport="true">
+            app:layout_constraintTop_toBottomOf="@+id/messagetitle">
 
             <TextView
                 android:id="@+id/message"
@@ -69,24 +87,44 @@
                 android:layout_height="wrap_content"
                 android:layout_marginTop="8dp"
                 android:paddingBottom="16dp"
-                android:text=" "
+                android:text="fhdfhfhdsofhaofdjiaoh "
                 android:textAlignment="viewStart"
                 android:textColor="@color/ethOS_white"
-                android:textSize="14sp"
+                android:textSize="20sp"
+                android:fontFamily="@font/inter_regular_font"
                 app:layout_constraintEnd_toStartOf="@+id/guideline2"
                 app:layout_constraintStart_toStartOf="@+id/messagetitle"
                 app:layout_constraintTop_toBottomOf="@+id/messagetitle" />
         </ScrollView>
 
 
+        <androidx.constraintlayout.widget.Guideline
+            android:id="@+id/guideline"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            app:layout_constraintGuide_end="377dp" />
 
-        <androidx.constraintlayout.widget.Guideline android:id="@+id/guideline" android:layout_width="wrap_content" android:layout_height="wrap_content" android:orientation="vertical" app:layout_constraintGuide_begin="32dp" />
+        <androidx.constraintlayout.widget.Guideline
+            android:id="@+id/guideline3"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            app:layout_constraintGuide_percent="0.46" />
 
-        <androidx.constraintlayout.widget.Guideline android:id="@+id/guideline3" android:layout_width="wrap_content" android:layout_height="wrap_content" android:orientation="vertical" app:layout_constraintGuide_begin="195dp" />
+        <androidx.constraintlayout.widget.Guideline
+            android:id="@+id/guideline4"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            app:layout_constraintGuide_percent="0.54" />
 
-        <androidx.constraintlayout.widget.Guideline android:id="@+id/guideline4" android:layout_width="wrap_content" android:layout_height="wrap_content" android:orientation="vertical" app:layout_constraintGuide_end="195dp" />
-
-        <androidx.constraintlayout.widget.Guideline android:id="@+id/guideline2" android:layout_width="wrap_content" android:layout_height="wrap_content" android:orientation="vertical" app:layout_constraintGuide_end="32dp" />
+        <androidx.constraintlayout.widget.Guideline
+            android:id="@+id/guideline2"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            app:layout_constraintGuide_percent="0.92214113" />
 
     </androidx.constraintlayout.widget.ConstraintLayout>
 
