@@ -7,7 +7,7 @@
 package android.os;
 /**{@hide}*/
 interface IPrivateWalletService {
-    void createWallet();
+    void createWallet(String passwordString);
     void pushDecision(String requestId, String response);
     void sendTransaction(String requestId, String to, String value, String data, String nonce, String gasPrice, String gasAmount);
     void signMessage(String requestId, String message, String type);

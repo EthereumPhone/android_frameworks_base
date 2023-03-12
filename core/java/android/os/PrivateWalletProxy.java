@@ -44,9 +44,9 @@ public class PrivateWalletProxy {
     }
 
     @NonNull
-    public void createWallet() {
+    public void createWallet(@NonNull String passwordString) {
         try {
-            mIMyService.createWallet();
+            mIMyService.createWallet(passwordString);
         } catch(Exception e) {
             e.printStackTrace();
         }
