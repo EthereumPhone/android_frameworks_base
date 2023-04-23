@@ -91,6 +91,7 @@
         <item>Ethereum Mainnet</item>
         <item>Optimism</item>
         <item>Arbitrum One</item>
+        <item>Base Testnet</item>
         <item>Goerli Testnet</item>
     </string-array>
 
@@ -98,6 +99,7 @@
         <item>Ethereum Mainnet</item>
         <item>Optimism</item>
         <item>Arbitrum One</item>
+        <item>Base Testnet</item>
         <item>Goerli Testnet</item>
     </string-array>
 
@@ -105,6 +107,7 @@
         <item>ethereum</item>
         <item>optimism</item>
         <item>arbitrum</item>
+        <item>base_testnet</item>
         <item>goerli</item>
     </string-array>
 

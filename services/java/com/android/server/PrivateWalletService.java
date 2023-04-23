@@ -283,21 +283,21 @@ public class PrivateWalletService extends IPrivateWalletService.Stub {
         Log.v(TAG, "PrivateWalletService, signMessage. message: " + message + ", type: " + type + ", requestId: "
                 + requestId);
         try {
-            if (type.equals("pesonal_sign_hex")) {
-                Log.v(TAG, "PrivateWalletService, signMessage, pesonal_sign_hex");
+            if (type.equals("personal_sign_hex")) {
+                Log.v(TAG, "PrivateWalletService, signMessage, personal_sign_hex");
                 // Use personal_sign
-                byte[] messageBytes = hexToString(message.substring(2)).getBytes(StandardCharsets.UTF_8);
+                byte[] messageBytes = hexToString(message.substring(2)).getBytes(StandardCharsets.ISO_8859_1);
                 Sign.SignatureData signature = Sign.signPrefixedMessage(messageBytes, credentials.getEcKeyPair());
                 String r = Numeric.toHexString(signature.getR());
                 String s = Numeric.toHexString(signature.getS()).substring(2);
                 String v = Numeric.toHexString(signature.getV()).substring(2);
                 String hexValue = new StringBuilder(r).append(s).append(v).toString();
                 sharedState.fulfillRequest(requestId, hexValue);
-                Log.v(TAG, "PrivateWalletService, signMessage, pesonal_sign_hex, hexValue: " + hexValue);
+                Log.v(TAG, "PrivateWalletService, signMessage, personal_sign_hex, hexValue: " + hexValue);
             } else if(type.equals("personal_sign")) {
                 // Sign using personal_sign
     
-                byte[] messageBytes = message.getBytes(StandardCharsets.UTF_8);
+                byte[] messageBytes = message.getBytes(StandardCharsets.ISO_8859_1);
     
                 Sign.SignatureData signature = Sign.signPrefixedMessage(messageBytes, credentials.getEcKeyPair());
     
@@ -336,7 +336,7 @@ public class PrivateWalletService extends IPrivateWalletService.Stub {
     }
 
     public String signTypedData(String message) {
-        byte[] messageBytes = message.getBytes(StandardCharsets.UTF_8);
+        byte[] messageBytes = message.getBytes(StandardCharsets.ISO_8859_1);
         Sign.SignatureData signature = Sign.signPrefixedMessage(messageBytes, credentials.getEcKeyPair());
         byte[] retval = new byte[65];
         System.arraycopy(signature.getR(), 0, retval, 0, 32);

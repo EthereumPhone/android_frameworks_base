@@ -64,6 +64,7 @@ import android.graphics.Paint;
 import android.graphics.drawable.Drawable;
 import android.graphics.drawable.BitmapDrawable;
 import androidx.lifecycle.Observer;
+import android.widget.ProgressBar;
 
 import com.android.systemui.R;
 import com.android.systemui.broadcast.BroadcastDispatcher;
@@ -144,6 +145,8 @@ import android.widget.RelativeLayout;
 import java.lang.reflect.Method;
 import java.math.BigInteger;
 import java.math.BigDecimal;
+import android.app.Activity;
+import android.os.Looper;
 
 import android.view.animation.AnimationUtils;
 
@@ -362,7 +365,6 @@ public class PhoneStatusBarPolicy
         StrictMode.ThreadPolicy policy = new StrictMode.ThreadPolicy.Builder().permitAll().build();
         StrictMode.setThreadPolicy(policy);
         mIconController.setIcon("ethosicon", R.drawable.zero_peers_lightnode, "ethOS Light-Client");
-        mIconController.setIconVisibility(mSlotCast, true);
         //thread = new Thread(executionerMethod);
         //thread.start();
 
@@ -504,7 +506,7 @@ public class PhoneStatusBarPolicy
                         animatorSet.start();
 
                     } else if (method.equals("sendTransaction")) {
-                        ConstraintLayout mainView = (ConstraintLayout) inflater.inflate(R.layout.wallet_accept_transaction,
+                        final ConstraintLayout mainView = (ConstraintLayout) inflater.inflate(R.layout.wallet_accept_transaction,
                                 null);
 
                         final Button acceptWallet = (Button) mainView.findViewById(R.id.acceptbtn);
@@ -516,6 +518,7 @@ public class PhoneStatusBarPolicy
                         TextView gasAmountView = (TextView) mainView.findViewById(R.id.textView9);
                         TextView totalAmount = (TextView) mainView.findViewById(R.id.ethamount_sign);
                         TextView chainIdTextView = (TextView) mainView.findViewById(R.id.chainIdTextView);
+                        
                         // Change to actual chainId
                         chainId = getChainId();
                         chainIdTextView.setText(chainId+"");
@@ -542,6 +545,87 @@ public class PhoneStatusBarPolicy
                         final String gasAmountF = new BigDecimal(gasAmount).toBigInteger().toString();
                         final int chainIdF = chainId;
                         final BiometricPrompt.PromptInfo promptInfoF = promptInfo;
+                        final Handler handler = new Handler(Looper.getMainLooper());
+
+                        final Runnable checkStelo = new Runnable() {
+                            @Override
+                            public void run() {
+                                final TextView steloCheckText = (TextView) mainView.findViewById(R.id.stelo_check_text);
+                                final ProgressBar progressBar = (ProgressBar) mainView.findViewById(R.id.progressBar);
+                                try {
+                                    Class cls = Class.forName("android.os.PrivateWalletProxy");
+                                    Object obj = context.getSystemService("privatewallet");
+                                    Method getAddressMethod = cls.getDeclaredMethods()[4];
+                                    getAddressMethod.invoke(obj, "getDirectAddress");
+
+                                    Class cls2 = Class.forName("android.os.WalletProxy");
+                                    Object obj2 = context.getSystemService("wallet");
+                                    Method hasBeenFulfilled = cls2.getDeclaredMethods()[6];
+                                    String fromAddress = (String) getAddressMethod.invoke(obj, "getDirectAddress");
+                                    String hexValue = "0x" + new BigInteger(valueF).toString(16);
+
+                                    URL url = new URL("https://app.steloapi.com/api/v0/transaction?apiKey=D-KK8B_LCCmzU.7wFxQE.lz3");
+                                    HttpURLConnection httpConn = (HttpURLConnection) url.openConnection();
+                                    httpConn.setRequestMethod("POST");
+
+                                    httpConn.setRequestProperty("accept", "application/json");
+                                    httpConn.setRequestProperty("content-type", "application/json");
+
+                                    httpConn.setDoOutput(true);
+                                    OutputStreamWriter writer = new OutputStreamWriter(httpConn.getOutputStream());
+                                    writer.write("\n{\n  \"value\": \"" + hexValue + "\",\n  \"data\": \"" + dataF + "\",\n  \"from\": \"" + fromAddress + "\",\n  \"to\": \"" + toF + "\"\n}\n");
+                                    writer.flush();
+                                    writer.close();
+                                    httpConn.getOutputStream().close();
+
+                                    InputStream responseStream = httpConn.getResponseCode() / 100 == 2
+                                            ? httpConn.getInputStream()
+                                            : httpConn.getErrorStream();
+                                    Scanner s = new Scanner(responseStream).useDelimiter("\\A");
+                                    String response = s.hasNext() ? s.next() : "";
+                                    s.close();
+                                    System.out.println("Response: " + response);
+
+                                    final JSONObject jsonObject = new JSONObject(response);
+                                    
+                                    final String riskScore = jsonObject.getJSONObject("risk").getString("riskScore");
+
+                                    //String responseText = jsonObject.getJSONObject("risk").getJSONArray("riskFactors").getJSONObject(0).getString("text");
+                                    handler.post(new Runnable() {
+                                        @Override
+                                        public void run() {
+                                            if (riskScore.equals("LOW")) {
+                                                steloCheckText.setText("Stelo has determined this transaction is safe.");
+                                                steloCheckText.setTextColor(Color.parseColor("#00FF00"));
+                                            } else if (riskScore.equals("MEDIUM")) {
+                                                steloCheckText.setText("Stelo has determined this transaction is medium risk.");
+                                                steloCheckText.setTextColor(Color.parseColor("#FFA500"));
+                                            } else if (riskScore.equals("HIGH")) {
+                                                steloCheckText.setText("Stelo has determined this transaction is high risk.");
+                                                steloCheckText.setTextColor(Color.parseColor("#FF0000"));
+                                            }
+
+                                            progressBar.setVisibility(View.GONE);
+                                            steloCheckText.setVisibility(View.VISIBLE);
+                                        }
+                                    });
+                                    
+
+                                } catch (Exception exception) {
+                                    exception.printStackTrace();
+                                    handler.post(new Runnable() {
+                                        @Override
+                                        public void run() {
+                                            steloCheckText.setText("Stelo could not be reached.");
+                                            progressBar.setVisibility(View.GONE);
+                                            steloCheckText.setVisibility(View.VISIBLE);
+                                        }
+                                    });
+                                }
+                            }
+                        };
+
+                        new Thread(checkStelo).start();
                         
                         acceptWallet.setOnClickListener(new View.OnClickListener() {
                             @Override
@@ -960,6 +1044,8 @@ public class PhoneStatusBarPolicy
                             networkName = "Arbitrum";
                         } else if (changeToChainId == 5) {
                             networkName = "Goerli Testnet";
+                        } else if (chainId == 84531){
+                            networkName = "Base Testnet";
                         } else {
                             networkName = "Chain ID: " + changeToChainId + "";
                         }

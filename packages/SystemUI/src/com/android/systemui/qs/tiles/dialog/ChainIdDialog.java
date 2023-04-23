@@ -15,6 +15,11 @@ import java.lang.reflect.*;
 import java.util.Arrays;
 import android.widget.AdapterView;
 import java.util.List;
+import android.content.res.Configuration;
+import android.view.ViewGroup;
+import android.annotation.NonNull;
+import android.widget.TextView;
+import android.annotation.NonNull;
 
 import com.android.internal.app.AlertController;
 import com.android.systemui.R;
@@ -32,6 +37,12 @@ public class ChainIdDialog extends SystemUIDialog implements Window.Callback {
         super(context);
         mChainIdDialogFactory = chainIdDialogFactory;
         mContext = context;
+    }
+
+    public boolean isDarkModeEnabled() {
+        // Check if the system is in dark mode
+        int nightModeFlags = mContext.getResources().getConfiguration().uiMode & Configuration.UI_MODE_NIGHT_MASK;
+        return nightModeFlags == Configuration.UI_MODE_NIGHT_YES;
     }
 
     public int getChainId() {
@@ -56,10 +67,19 @@ public class ChainIdDialog extends SystemUIDialog implements Window.Callback {
         mDialogView = LayoutInflater.from(mContext).inflate(R.layout.chain_id_dialog,
                 null);
         mSpinner = (Spinner) mDialogView.findViewById(R.id.chain_id_spinner);
+        if(isDarkModeEnabled()) {
+            mSpinner.setBackgroundResource(R.drawable.layout_dropdown_bg);
+        } else {
+            mSpinner.setBackgroundResource(R.drawable.layout_dropdown_bg_light);
+        }
         // Add the chain ids to the spinner
-        List<String> list = Arrays.asList("Ethereum Mainnet", "Optimism", "Arbitrum One", "Goerli Testnet");
+        List<String> list = Arrays.asList("Ethereum Mainnet", "Optimism", "Arbitrum One", "Base Testnet", "Goerli Testnet");
         ArrayAdapter<String> adapter = new ArrayAdapter<String>(mContext, R.layout.spinner_item, list);
         adapter.setDropDownViewResource(R.layout.spinner_dropdown_item);
+        // Make spinner dropdown background white if dark mode is disabled
+        if(!isDarkModeEnabled()) {
+            adapter.setDropDownViewResource(R.layout.spinner_dropdown_item_light);
+        }
         mSpinner.setAdapter(adapter);
         int chainId = getChainId();
         switch(chainId) {
@@ -72,8 +92,11 @@ public class ChainIdDialog extends SystemUIDialog implements Window.Callback {
             case 42161:
                 mSpinner.setSelection(2);
                 break;
-            case 5:
+            case 84531:
                 mSpinner.setSelection(3);
+                break;
+            case 5:
+                mSpinner.setSelection(4);
                 break;
         }
         // Set OnItemSelectedListener
@@ -96,6 +119,9 @@ public class ChainIdDialog extends SystemUIDialog implements Window.Callback {
                         break;
                     case "Goerli Testnet":
                         newChainId = 5;
+                        break;
+                    case "Base Testnet":
+                        newChainId = 84531;
                         break;
                 }
                 try {

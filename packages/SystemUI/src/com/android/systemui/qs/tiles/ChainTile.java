@@ -63,6 +63,7 @@ public class ChainTile extends QSTileImpl<BooleanState> {
     public BooleanState newTileState() {
         BooleanState state = new BooleanState();
         state.value = true;
+        state.forceExpandIcon = true;
         state.icon = ResourceIcon.get(R.drawable.ic_chain);
         state.label = mContext.getString(R.string.chain_tile_label);
         // Get chainId string
@@ -75,6 +76,8 @@ public class ChainTile extends QSTileImpl<BooleanState> {
             state.secondaryLabel = "Arbitrum One";
         } else if (chainId == 5){
             state.secondaryLabel = "Goerli Testnet";
+        } else if (chainId == 84531){
+            state.secondaryLabel = "Base Testnet";
         } else {
             state.secondaryLabel = "Chain: " + chainId;
         }
@@ -120,6 +123,8 @@ public class ChainTile extends QSTileImpl<BooleanState> {
             state.secondaryLabel = "Arbitrum One";
         } else if (chainId == 5){
             state.secondaryLabel = "Goerli Testnet";
+        } else if (chainId == 84531){
+            state.secondaryLabel = "Base Testnet";
         } else {
             state.secondaryLabel = "Chain: " + chainId;
         }
@@ -143,6 +148,8 @@ public class ChainTile extends QSTileImpl<BooleanState> {
             return "Arbitrum One";
         } else if (chainId == 5){
             return "Goerli Testnet";
+        } else if (chainId == 84531){
+            return "Base Testnet";
         } else {
             return "Chain: " + chainId;
         }
