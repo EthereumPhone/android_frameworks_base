@@ -28,6 +28,7 @@ import android.bluetooth.BluetoothDevice;
 import android.bluetooth.BluetoothHearingAid;
 import android.bluetooth.BluetoothProfile;
 import android.content.Context;
+import android.os.Parcel;
 
 import org.junit.Before;
 import org.junit.Test;
@@ -48,7 +49,7 @@ public class HearingAidDeviceManagerTest {
     private final static String DEVICE_ADDRESS_1 = "AA:BB:CC:DD:EE:11";
     private final static String DEVICE_ADDRESS_2 = "AA:BB:CC:DD:EE:22";
     private final BluetoothClass DEVICE_CLASS =
-            new BluetoothClass(BluetoothClass.Device.AUDIO_VIDEO_HANDSFREE);
+            createBtClass(BluetoothClass.Device.AUDIO_VIDEO_HANDSFREE);
     @Mock
     private LocalBluetoothProfileManager mLocalProfileManager;
     @Mock
@@ -66,6 +67,16 @@ public class HearingAidDeviceManagerTest {
     private CachedBluetoothDeviceManager mCachedDeviceManager;
     private HearingAidDeviceManager mHearingAidDeviceManager;
     private Context mContext;
+
+    private BluetoothClass createBtClass(int deviceClass) {
+        Parcel p = Parcel.obtain();
+        p.writeInt(deviceClass);
+        p.setDataPosition(0); // reset position of parcel before passing to constructor
+
+        BluetoothClass bluetoothClass = BluetoothClass.CREATOR.createFromParcel(p);
+        p.recycle();
+        return bluetoothClass;
+    }
 
     @Before
     public void setUp() {
@@ -91,16 +102,25 @@ public class HearingAidDeviceManagerTest {
     }
 
     /**
-     * Test initHearingAidDeviceIfNeeded, a valid HiSyncId will be assigned
+     * Test initHearingAidDeviceIfNeeded, set HearingAid's information, including HiSyncId,
+     * deviceSide, deviceMode.
      */
     @Test
-    public void initHearingAidDeviceIfNeeded_validHiSyncId_verifyHiSyncId() {
+    public void initHearingAidDeviceIfNeeded_validHiSyncId_setHearingAidInfos() {
         when(mHearingAidProfile.getHiSyncId(mDevice1)).thenReturn(HISYNCID1);
+        when(mHearingAidProfile.getDeviceMode(mDevice1)).thenReturn(
+                HearingAidProfile.DeviceMode.MODE_BINAURAL);
+        when(mHearingAidProfile.getDeviceSide(mDevice1)).thenReturn(
+                HearingAidProfile.DeviceSide.SIDE_RIGHT);
 
         assertThat(mCachedDevice1.getHiSyncId()).isNotEqualTo(HISYNCID1);
         mHearingAidDeviceManager.initHearingAidDeviceIfNeeded(mCachedDevice1);
 
         assertThat(mCachedDevice1.getHiSyncId()).isEqualTo(HISYNCID1);
+        assertThat(mCachedDevice1.getDeviceMode()).isEqualTo(
+                HearingAidProfile.DeviceMode.MODE_BINAURAL);
+        assertThat(mCachedDevice1.getDeviceSide()).isEqualTo(
+                HearingAidProfile.DeviceSide.SIDE_RIGHT);
     }
 
     /**
@@ -240,6 +260,29 @@ public class HearingAidDeviceManagerTest {
     }
 
     /**
+     * Test updateHearingAidsDevices, set HearingAid's information, including HiSyncId, deviceSide,
+     * deviceMode.
+     */
+    @Test
+    public void updateHearingAidsDevices_validHiSyncId_setHearingAidInfos() {
+        when(mHearingAidProfile.getHiSyncId(mDevice1)).thenReturn(HISYNCID1);
+        when(mHearingAidProfile.getDeviceMode(mDevice1)).thenReturn(
+                HearingAidProfile.DeviceMode.MODE_BINAURAL);
+        when(mHearingAidProfile.getDeviceSide(mDevice1)).thenReturn(
+                HearingAidProfile.DeviceSide.SIDE_RIGHT);
+        mCachedDeviceManager.mCachedDevices.add(mCachedDevice1);
+
+        mHearingAidDeviceManager.updateHearingAidsDevices();
+
+        assertThat(mCachedDevice1.getHiSyncId()).isEqualTo(HISYNCID1);
+        assertThat(mCachedDevice1.getDeviceMode()).isEqualTo(
+                HearingAidProfile.DeviceMode.MODE_BINAURAL);
+        assertThat(mCachedDevice1.getDeviceSide()).isEqualTo(
+                HearingAidProfile.DeviceSide.SIDE_RIGHT);
+        verify(mHearingAidDeviceManager).onHiSyncIdChanged(HISYNCID1);
+    }
+
+    /**
      * Test onProfileConnectionStateChangedIfProcessed.
      * When first hearing aid device is connected, to process it same as other generic devices.
      * No need to process it.
@@ -347,8 +390,10 @@ public class HearingAidDeviceManagerTest {
     public void onProfileConnectionStateChanged_disconnected_mainDevice_subDeviceConnected_switch()
     {
         when(mCachedDevice1.getHiSyncId()).thenReturn(HISYNCID1);
+        mCachedDevice1.setDeviceSide(HearingAidProfile.DeviceSide.SIDE_LEFT);
         when(mCachedDevice2.getHiSyncId()).thenReturn(HISYNCID1);
         when(mCachedDevice2.isConnected()).thenReturn(true);
+        mCachedDevice2.setDeviceSide(HearingAidProfile.DeviceSide.SIDE_RIGHT);
         mCachedDeviceManager.mCachedDevices.add(mCachedDevice1);
         mCachedDevice1.setSubDevice(mCachedDevice2);
 
@@ -359,6 +404,10 @@ public class HearingAidDeviceManagerTest {
 
         assertThat(mCachedDevice1.mDevice).isEqualTo(mDevice2);
         assertThat(mCachedDevice2.mDevice).isEqualTo(mDevice1);
+        assertThat(mCachedDevice1.getDeviceSide()).isEqualTo(
+                HearingAidProfile.DeviceSide.SIDE_RIGHT);
+        assertThat(mCachedDevice2.getDeviceSide()).isEqualTo(
+                HearingAidProfile.DeviceSide.SIDE_LEFT);
         verify(mCachedDevice1).refresh();
     }
 

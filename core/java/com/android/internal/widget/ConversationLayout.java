@@ -111,6 +111,7 @@ public class ConversationLayout extends FrameLayout
     private Icon mLargeIcon;
     private View mExpandButtonContainer;
     private ViewGroup mExpandButtonAndContentContainer;
+    private ViewGroup mExpandButtonContainerA11yContainer;
     private NotificationExpandButton mExpandButton;
     private MessagingLinearLayout mImageMessageContainer;
     private int mBadgeProtrusion;
@@ -234,6 +235,8 @@ public class ConversationLayout extends FrameLayout
         });
         mConversationText = findViewById(R.id.conversation_text);
         mExpandButtonContainer = findViewById(R.id.expand_button_container);
+        mExpandButtonContainerA11yContainer =
+                findViewById(R.id.expand_button_a11y_container);
         mConversationHeader = findViewById(R.id.conversation_header);
         mContentContainer = findViewById(R.id.notification_action_list_margin_target);
         mExpandButtonAndContentContainer = findViewById(R.id.expand_button_and_content_container);
@@ -879,6 +882,10 @@ public class ConversationLayout extends FrameLayout
             if (newGroup == null) {
                 newGroup = MessagingGroup.createGroup(mMessagingLinearLayout);
                 mAddedGroups.add(newGroup);
+            } else if (newGroup.getParent() != mMessagingLinearLayout) {
+                throw new IllegalStateException(
+                        "group parent was " + newGroup.getParent() + " but expected "
+                                + mMessagingLinearLayout);
             }
             newGroup.setImageDisplayLocation(mIsCollapsed
                     ? IMAGE_DISPLAY_LOCATION_EXTERNAL
@@ -1087,7 +1094,7 @@ public class ConversationLayout extends FrameLayout
             newContainer = mExpandButtonAndContentContainer;
         } else {
             buttonGravity = Gravity.CENTER_HORIZONTAL | Gravity.TOP;
-            newContainer = this;
+            newContainer = mExpandButtonContainerA11yContainer;
         }
         mExpandButton.setExpanded(!mIsCollapsed);
 

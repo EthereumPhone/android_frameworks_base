@@ -18,7 +18,7 @@ package com.android.systemui.keyguard;
 
 import android.os.Handler;
 import android.os.Message;
-import android.os.PowerManager;
+import android.os.Trace;
 
 import com.android.systemui.dagger.SysUISingleton;
 
@@ -39,6 +39,7 @@ public class KeyguardLifecyclesDispatcher {
     static final int FINISHED_WAKING_UP = 5;
     static final int STARTED_GOING_TO_SLEEP = 6;
     static final int FINISHED_GOING_TO_SLEEP = 7;
+    private static final String TAG = "KeyguardLifecyclesDispatcher";
 
     private final ScreenLifecycle mScreenLifecycle;
     private final WakefulnessLifecycle mWakefulnessLifecycle;
@@ -65,12 +66,22 @@ public class KeyguardLifecyclesDispatcher {
         message.sendToTarget();
     }
 
+    /**
+     * @param what Message to send.
+     * @param object Object to send with the message
+     */
+    void dispatch(int what, Object object) {
+        mHandler.obtainMessage(what, object).sendToTarget();
+    }
+
     private Handler mHandler = new Handler() {
         @Override
         public void handleMessage(Message msg) {
             switch (msg.what) {
                 case SCREEN_TURNING_ON:
+                    Trace.beginSection("KeyguardLifecyclesDispatcher#SCREEN_TURNING_ON");
                     mScreenLifecycle.dispatchScreenTurningOn();
+                    Trace.endSection();
                     break;
                 case SCREEN_TURNED_ON:
                     mScreenLifecycle.dispatchScreenTurnedOn();

@@ -16,6 +16,9 @@
 
 package com.android.systemui.qs.tiles;
 
+import static android.app.admin.DevicePolicyResources.Strings.SystemUi.QS_WORK_PROFILE_LABEL;
+
+import android.app.admin.DevicePolicyManager;
 import android.content.Intent;
 import android.os.Handler;
 import android.os.Looper;
@@ -24,6 +27,7 @@ import android.service.quicksettings.Tile;
 import android.view.View;
 import android.widget.Switch;
 
+import androidx.annotation.MainThread;
 import androidx.annotation.Nullable;
 
 import com.android.internal.logging.MetricsLogger;
@@ -88,19 +92,22 @@ public class WorkModeTile extends QSTileImpl<BooleanState> implements
     }
 
     @Override
+    @MainThread
     public void onManagedProfileChanged() {
         refreshState(mProfileController.isWorkModeEnabled());
     }
 
     @Override
+    @MainThread
     public void onManagedProfileRemoved() {
         mHost.removeTile(getTileSpec());
-        mHost.unmarkTileAsAutoAdded(getTileSpec());
     }
 
     @Override
     public CharSequence getTileLabel() {
-        return mContext.getString(R.string.quick_settings_work_mode_label);
+        DevicePolicyManager dpm = mContext.getSystemService(DevicePolicyManager.class);
+        return dpm.getResources().getString(QS_WORK_PROFILE_LABEL,
+                () -> mContext.getString(R.string.quick_settings_work_mode_label));
     }
 
     @Override

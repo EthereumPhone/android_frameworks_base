@@ -68,9 +68,18 @@ public class SeekBarVolumizer implements OnSeekBarChangeListener, Handler.Callba
         void onMuted(boolean muted, boolean zenMuted);
         /**
          * Callback reporting that the seek bar is start tracking.
+         *
          * @param sbv - The seek bar that start tracking
          */
         void onStartTrackingTouch(SeekBarVolumizer sbv);
+
+        /**
+         * Callback reporting that the seek bar is stop tracking.
+         *
+         * @param sbv - The seek bar that stop tracking
+         */
+        default void onStopTrackingTouch(SeekBarVolumizer sbv) {
+        }
     }
 
     private static final int MSG_GROUP_VOLUME_CHANGED = 1;
@@ -107,6 +116,7 @@ public class SeekBarVolumizer implements OnSeekBarChangeListener, Handler.Callba
     private final boolean mVoiceCapable;
     private boolean mAffectedByRingerMode;
     private boolean mNotificationOrRing;
+    private final boolean mNotifAliasRing;
     private final Receiver mReceiver = new Receiver();
 
     private Handler mHandler;
@@ -171,6 +181,8 @@ public class SeekBarVolumizer implements OnSeekBarChangeListener, Handler.Callba
         if (mNotificationOrRing) {
             mRingerMode = mAudioManager.getRingerModeInternal();
         }
+        mNotifAliasRing = mContext.getResources().getBoolean(
+                com.android.internal.R.bool.config_alias_ring_notif_stream_types);
         mZenMode = mNotificationManager.getZenMode();
 
         if (hasAudioProductStrategies()) {
@@ -217,7 +229,7 @@ public class SeekBarVolumizer implements OnSeekBarChangeListener, Handler.Callba
 
         return AudioManager.getAudioProductStrategies().stream()
                 .map(strategy -> strategy.getVolumeGroupIdForAudioAttributes(
-                        AudioProductStrategy.sDefaultAttributes))
+                        AudioProductStrategy.getDefaultAttributes()))
                 .filter(volumeGroupId -> volumeGroupId != AudioVolumeGroup.DEFAULT_VOLUME_GROUP)
                 .findFirst()
                 .orElse(AudioVolumeGroup.DEFAULT_VOLUME_GROUP);
@@ -359,6 +371,7 @@ public class SeekBarVolumizer implements OnSeekBarChangeListener, Handler.Callba
         // set the time of stop volume
         if ((mStreamType == AudioManager.STREAM_VOICE_CALL
                 || mStreamType == AudioManager.STREAM_RING
+                || (!mNotifAliasRing && mStreamType == AudioManager.STREAM_NOTIFICATION)
                 || mStreamType == AudioManager.STREAM_ALARM)) {
             sStopVolumeTime = java.lang.System.currentTimeMillis();
         }
@@ -465,6 +478,9 @@ public class SeekBarVolumizer implements OnSeekBarChangeListener, Handler.Callba
 
     public void onStopTrackingTouch(SeekBar seekBar) {
         postStartSample();
+        if (mCallback != null) {
+            mCallback.onStopTrackingTouch(this);
+        }
     }
 
     public boolean isSamplePlaying() {

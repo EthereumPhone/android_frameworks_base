@@ -21,9 +21,11 @@ import android.graphics.PointF;
 
 import com.android.systemui.R;
 import com.android.systemui.dump.DumpManager;
+import com.android.systemui.flags.FeatureFlags;
+import com.android.systemui.flags.Flags;
 import com.android.systemui.plugins.statusbar.StatusBarStateController;
+import com.android.systemui.shade.ShadeExpansionStateManager;
 import com.android.systemui.statusbar.phone.SystemUIDialogManager;
-import com.android.systemui.statusbar.phone.panelstate.PanelExpansionStateManager;
 
 /**
  * Class that coordinates non-HBM animations during enrollment.
@@ -54,19 +56,26 @@ public class UdfpsEnrollViewController extends UdfpsAnimationViewController<Udfp
             @NonNull UdfpsEnrollView view,
             @NonNull UdfpsEnrollHelper enrollHelper,
             @NonNull StatusBarStateController statusBarStateController,
-            @NonNull PanelExpansionStateManager panelExpansionStateManager,
+            @NonNull ShadeExpansionStateManager shadeExpansionStateManager,
             @NonNull SystemUIDialogManager systemUIDialogManager,
-            @NonNull DumpManager dumpManager) {
-        super(view, statusBarStateController, panelExpansionStateManager, systemUIDialogManager,
+            @NonNull DumpManager dumpManager,
+            @NonNull FeatureFlags featureFlags,
+            float scaleFactor) {
+        super(view, statusBarStateController, shadeExpansionStateManager, systemUIDialogManager,
                 dumpManager);
-        mEnrollProgressBarRadius = getContext().getResources()
-                .getInteger(R.integer.config_udfpsEnrollProgressBar);
+        mEnrollProgressBarRadius = (int) (scaleFactor * getContext().getResources().getInteger(
+                R.integer.config_udfpsEnrollProgressBar));
         mEnrollHelper = enrollHelper;
         mView.setEnrollHelper(mEnrollHelper);
+        mView.setProgressBarRadius(mEnrollProgressBarRadius);
+
+        if (featureFlags.isEnabled(Flags.UDFPS_NEW_TOUCH_DETECTION)) {
+            mView.mUseExpandedOverlay = true;
+        }
     }
 
     @Override
-    @NonNull String getTag() {
+    @NonNull protected String getTag() {
         return "UdfpsEnrollViewController";
     }
 
@@ -98,4 +107,10 @@ public class UdfpsEnrollViewController extends UdfpsAnimationViewController<Udfp
     public int getPaddingY() {
         return mEnrollProgressBarRadius;
     }
+
+    @Override
+    public void doAnnounceForAccessibility(String str) {
+        mView.announceForAccessibility(str);
+    }
+
 }

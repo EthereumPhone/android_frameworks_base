@@ -62,7 +62,6 @@
 #include <sys/time.h>
 #include <sys/types.h>
 #include <sys/un.h>
-#include <sys/utsname.h>
 #include <sys/wait.h>
 #include <unistd.h>
 
@@ -111,6 +110,8 @@ using android::base::GetBoolProperty;
 
 using android::zygote::ZygoteFailure;
 
+using Action = android_mallopt_gwp_asan_options_t::Action;
+
 // This type is duplicated in fd_utils.h
 typedef const std::function<void(std::string)>& fail_fn_t;
 
@@ -125,6 +126,7 @@ static jmethodID gCallPostForkChildHooks;
 static constexpr const char* kZygoteInitClassName = "com/android/internal/os/ZygoteInit";
 static jclass gZygoteInitClass;
 static jmethodID gGetOrCreateSystemServerClassLoader;
+static jmethodID gPrefetchStandaloneSystemServerJars;
 
 static bool gIsSecurityEnforced = true;
 
@@ -201,6 +203,8 @@ static constexpr unsigned int STORAGE_DIR_CHECK_MAX_INTERVAL_US = 1000;
  * so it's fine to assume max retries is 5 mins.
  */
 static constexpr int STORAGE_DIR_CHECK_TIMEOUT_US = 1000 * 1000 * 60 * 5;
+
+static void WaitUntilDirReady(const std::string& target, fail_fn_t fail_fn);
 
 /**
  * A helper class containing accounting information for USAPs.
@@ -344,7 +348,7 @@ enum RuntimeFlags : uint32_t {
     GWP_ASAN_LEVEL_NEVER = 0 << 21,
     GWP_ASAN_LEVEL_LOTTERY = 1 << 21,
     GWP_ASAN_LEVEL_ALWAYS = 2 << 21,
-    NATIVE_HEAP_ZERO_INIT = 1 << 23,
+    NATIVE_HEAP_ZERO_INIT_ENABLED = 1 << 23,
     PROFILEABLE = 1 << 24,
 };
 
@@ -850,26 +854,6 @@ static void MountEmulatedStorage(uid_t uid, jint mount_mode,
   }
 }
 
-static bool NeedsNoRandomizeWorkaround() {
-#if !defined(__arm__)
-    return false;
-#else
-    int major;
-    int minor;
-    struct utsname uts;
-    if (uname(&uts) == -1) {
-        return false;
-    }
-
-    if (sscanf(uts.release, "%d.%d", &major, &minor) != 2) {
-        return false;
-    }
-
-    // Kernels before 3.4.* need the workaround.
-    return (major < 3) || ((major == 3) && (minor < 4));
-#endif
-}
-
 // Utility to close down the Zygote socket file descriptors while
 // the child is still running as root with Zygote's privileges.  Each
 // descriptor (if any) is closed via dup3(), replacing it with a valid
@@ -913,7 +897,7 @@ void SetThreadName(const std::string& thread_name) {
 
   // pthread_setname_np fails rather than truncating long strings.
   char buf[16];       // MAX_TASK_COMM_LEN=16 is hard-coded into bionic
-  strlcpy(buf, name_start_ptr, sizeof(buf) - 1);
+  strlcpy(buf, name_start_ptr, sizeof(buf));
   errno = pthread_setname_np(pthread_self(), buf);
   if (errno != 0) {
     ALOGW("Unable to set the name of current thread to '%s': %s", buf, strerror(errno));
@@ -1163,14 +1147,14 @@ static void isolateAppDataPerPackage(int userId, std::string_view package_name,
 }
 
 // Relabel directory
-static void relabelDir(const char* path, security_context_t context, fail_fn_t fail_fn) {
+static void relabelDir(const char* path, const char* context, fail_fn_t fail_fn) {
   if (setfilecon(path, context) != 0) {
     fail_fn(CREATE_ERROR("Failed to setfilecon %s %s", path, strerror(errno)));
   }
 }
 
 // Relabel all directories under a path non-recursively.
-static void relabelAllDirs(const char* path, security_context_t context, fail_fn_t fail_fn) {
+static void relabelAllDirs(const char* path, const char* context, fail_fn_t fail_fn) {
   DIR* dir = opendir(path);
   if (dir == nullptr) {
     fail_fn(CREATE_ERROR("Failed to opendir %s", path));
@@ -1190,6 +1174,11 @@ static void relabelAllDirs(const char* path, security_context_t context, fail_fn
     }
   }
   closedir(dir);
+}
+
+static bool is_sdk_sandbox_uid(uid_t uid) {
+    appid_t appId = multiuser_get_app_id(uid);
+    return appId >= AID_SDK_SANDBOX_PROCESS_START && appId <= AID_SDK_SANDBOX_PROCESS_END;
 }
 
 /**
@@ -1245,7 +1234,7 @@ static void isolateAppData(JNIEnv* env, const std::vector<std::string>& merged_d
   snprintf(internalDePath, PATH_MAX, "/data/user_de");
   snprintf(externalPrivateMountPath, PATH_MAX, "/mnt/expand");
 
-  security_context_t dataDataContext = nullptr;
+  char* dataDataContext = nullptr;
   if (getfilecon(internalDePath, &dataDataContext) < 0) {
     fail_fn(CREATE_ERROR("Unable to getfilecon on %s %s", internalDePath,
         strerror(errno)));
@@ -1269,73 +1258,86 @@ static void isolateAppData(JNIEnv* env, const std::vector<std::string>& merged_d
     auto volPath = StringPrintf("%s/%s", externalPrivateMountPath, ent->d_name);
     auto cePath = StringPrintf("%s/user", volPath.c_str());
     auto dePath = StringPrintf("%s/user_de", volPath.c_str());
+    // Wait until dir user is created.
+    WaitUntilDirReady(cePath.c_str(), fail_fn);
     MountAppDataTmpFs(cePath.c_str(), fail_fn);
+    // Wait until dir user_de is created.
+    WaitUntilDirReady(dePath.c_str(), fail_fn);
     MountAppDataTmpFs(dePath.c_str(), fail_fn);
   }
   closedir(dir);
 
-  // Prepare default dirs for user 0 as user 0 always exists.
-  int result = symlink("/data/data", "/data/user/0");
-  if (result != 0) {
-    fail_fn(CREATE_ERROR("Failed to create symlink /data/user/0 %s", strerror(errno)));
-  }
-  PrepareDirIfNotPresent("/data/user_de/0", DEFAULT_DATA_DIR_PERMISSION,
-      AID_ROOT, AID_ROOT, fail_fn);
-
-  for (int i = 0; i < size; i += 3) {
-    std::string const & packageName = merged_data_info_list[i];
-    std::string const & volUuid  = merged_data_info_list[i + 1];
-    std::string const & inode = merged_data_info_list[i + 2];
-
-    std::string::size_type sz;
-    long long ceDataInode = std::stoll(inode, &sz);
-
-    std::string actualCePath, actualDePath;
-    if (volUuid.compare("null") != 0) {
-      // Volume that is stored in /mnt/expand
-      char volPath[PATH_MAX];
-      char volCePath[PATH_MAX];
-      char volDePath[PATH_MAX];
-      char volCeUserPath[PATH_MAX];
-      char volDeUserPath[PATH_MAX];
-
-      snprintf(volPath, PATH_MAX, "/mnt/expand/%s", volUuid.c_str());
-      snprintf(volCePath, PATH_MAX, "%s/user", volPath);
-      snprintf(volDePath, PATH_MAX, "%s/user_de", volPath);
-      snprintf(volCeUserPath, PATH_MAX, "%s/%d", volCePath, userId);
-      snprintf(volDeUserPath, PATH_MAX, "%s/%d", volDePath, userId);
-
-      PrepareDirIfNotPresent(volPath, DEFAULT_DATA_DIR_PERMISSION, AID_ROOT, AID_ROOT, fail_fn);
-      PrepareDirIfNotPresent(volCePath, DEFAULT_DATA_DIR_PERMISSION, AID_ROOT, AID_ROOT, fail_fn);
-      PrepareDirIfNotPresent(volDePath, DEFAULT_DATA_DIR_PERMISSION, AID_ROOT, AID_ROOT, fail_fn);
-      PrepareDirIfNotPresent(volCeUserPath, DEFAULT_DATA_DIR_PERMISSION, AID_ROOT, AID_ROOT,
-          fail_fn);
-      PrepareDirIfNotPresent(volDeUserPath, DEFAULT_DATA_DIR_PERMISSION, AID_ROOT, AID_ROOT,
-          fail_fn);
-
-      actualCePath = volCeUserPath;
-      actualDePath = volDeUserPath;
-    } else {
-      // Internal volume that stored in /data
-      char internalCeUserPath[PATH_MAX];
-      char internalDeUserPath[PATH_MAX];
-      snprintf(internalCeUserPath, PATH_MAX, "/data/user/%d", userId);
-      snprintf(internalDeUserPath, PATH_MAX, "/data/user_de/%d", userId);
-      // If it's not user 0, create /data/user/$USER.
-      if (userId == 0) {
-        actualCePath = internalLegacyCePath;
-      } else {
-        PrepareDirIfNotPresent(internalCeUserPath, DEFAULT_DATA_DIR_PERMISSION,
-            AID_ROOT, AID_ROOT, fail_fn);
-        actualCePath = internalCeUserPath;
+  // No bind mounting of app data should occur in the case of a sandbox process since SDK sandboxes
+  // should not be able to read app data. Tmpfs was mounted however since a sandbox should not have
+  // access to app data.
+  if (!is_sdk_sandbox_uid(uid)) {
+      // Prepare default dirs for user 0 as user 0 always exists.
+      int result = symlink("/data/data", "/data/user/0");
+      if (result != 0) {
+          fail_fn(CREATE_ERROR("Failed to create symlink /data/user/0 %s", strerror(errno)));
       }
-      PrepareDirIfNotPresent(internalDeUserPath, DEFAULT_DATA_DIR_PERMISSION,
-          AID_ROOT, AID_ROOT, fail_fn);
-      actualDePath = internalDeUserPath;
-    }
-    isolateAppDataPerPackage(userId, packageName, volUuid, ceDataInode,
-        actualCePath, actualDePath, fail_fn);
+      PrepareDirIfNotPresent("/data/user_de/0", DEFAULT_DATA_DIR_PERMISSION, AID_ROOT, AID_ROOT,
+                             fail_fn);
+
+      for (int i = 0; i < size; i += 3) {
+          std::string const& packageName = merged_data_info_list[i];
+          std::string const& volUuid = merged_data_info_list[i + 1];
+          std::string const& inode = merged_data_info_list[i + 2];
+
+          std::string::size_type sz;
+          long long ceDataInode = std::stoll(inode, &sz);
+
+          std::string actualCePath, actualDePath;
+          if (volUuid.compare("null") != 0) {
+              // Volume that is stored in /mnt/expand
+              char volPath[PATH_MAX];
+              char volCePath[PATH_MAX];
+              char volDePath[PATH_MAX];
+              char volCeUserPath[PATH_MAX];
+              char volDeUserPath[PATH_MAX];
+
+              snprintf(volPath, PATH_MAX, "/mnt/expand/%s", volUuid.c_str());
+              snprintf(volCePath, PATH_MAX, "%s/user", volPath);
+              snprintf(volDePath, PATH_MAX, "%s/user_de", volPath);
+              snprintf(volCeUserPath, PATH_MAX, "%s/%d", volCePath, userId);
+              snprintf(volDeUserPath, PATH_MAX, "%s/%d", volDePath, userId);
+
+              PrepareDirIfNotPresent(volPath, DEFAULT_DATA_DIR_PERMISSION, AID_ROOT, AID_ROOT,
+                                     fail_fn);
+              PrepareDirIfNotPresent(volCePath, DEFAULT_DATA_DIR_PERMISSION, AID_ROOT, AID_ROOT,
+                                     fail_fn);
+              PrepareDirIfNotPresent(volDePath, DEFAULT_DATA_DIR_PERMISSION, AID_ROOT, AID_ROOT,
+                                     fail_fn);
+              PrepareDirIfNotPresent(volCeUserPath, DEFAULT_DATA_DIR_PERMISSION, AID_ROOT, AID_ROOT,
+                                     fail_fn);
+              PrepareDirIfNotPresent(volDeUserPath, DEFAULT_DATA_DIR_PERMISSION, AID_ROOT, AID_ROOT,
+                                     fail_fn);
+
+              actualCePath = volCeUserPath;
+              actualDePath = volDeUserPath;
+          } else {
+              // Internal volume that stored in /data
+              char internalCeUserPath[PATH_MAX];
+              char internalDeUserPath[PATH_MAX];
+              snprintf(internalCeUserPath, PATH_MAX, "/data/user/%d", userId);
+              snprintf(internalDeUserPath, PATH_MAX, "/data/user_de/%d", userId);
+              // If it's not user 0, create /data/user/$USER.
+              if (userId == 0) {
+                  actualCePath = internalLegacyCePath;
+              } else {
+                  PrepareDirIfNotPresent(internalCeUserPath, DEFAULT_DATA_DIR_PERMISSION, AID_ROOT,
+                                         AID_ROOT, fail_fn);
+                  actualCePath = internalCeUserPath;
+              }
+              PrepareDirIfNotPresent(internalDeUserPath, DEFAULT_DATA_DIR_PERMISSION, AID_ROOT,
+                                     AID_ROOT, fail_fn);
+              actualDePath = internalDeUserPath;
+          }
+          isolateAppDataPerPackage(userId, packageName, volUuid, ceDataInode, actualCePath,
+                                   actualDePath, fail_fn);
+      }
   }
+
   // We set the label AFTER everything is done, as we are applying
   // the file operations on tmpfs. If we set the label when we mount
   // tmpfs, SELinux will not happy as we are changing system_data_files.
@@ -1373,6 +1375,167 @@ static void isolateAppData(JNIEnv* env, const std::vector<std::string>& merged_d
   closedir(dir);
 
   freecon(dataDataContext);
+}
+
+/**
+ * Without sdk sandbox data isolation, the sandbox could detect if another app is installed on the
+ * system by "touching" other data directories like /data/misc_ce/0/sdksandbox/com.whatsapp, similar
+ * to apps without app data isolation (see {@link #isolateAppData()}).
+ *
+ * To prevent this, tmpfs is mounted onto misc_ce and misc_de directories on all possible volumes in
+ * a separate mount namespace. The sandbox directory path is then created containing the name of the
+ * client app package associated with the sdk sandbox. The contents for this (sdk level storage and
+ * shared sdk storage) are bind mounted from the sandbox data mirror.
+ */
+static void isolateSdkSandboxData(JNIEnv* env, jobjectArray pkg_data_info_list, uid_t uid,
+                                  const char* process_name, jstring managed_nice_name,
+                                  fail_fn_t fail_fn) {
+    const userid_t userId = multiuser_get_user_id(uid);
+
+    int size = (pkg_data_info_list != nullptr) ? env->GetArrayLength(pkg_data_info_list) : 0;
+    // The sandbox should only have information of one associated client app (package, uuid, inode)
+    if (size != 3) {
+        fail_fn(CREATE_ERROR(
+                "Unable to isolate sandbox data, incorrect associated app information"));
+    }
+
+    auto extract_fn = [env, process_name, managed_nice_name,
+                       pkg_data_info_list](int info_list_idx) {
+        jstring jstr = (jstring)(env->GetObjectArrayElement(pkg_data_info_list, info_list_idx));
+        return ExtractJString(env, process_name, managed_nice_name, jstr).value();
+    };
+    std::string packageName = extract_fn(0);
+    std::string volUuid = extract_fn(1);
+
+    char internalCePath[PATH_MAX];
+    char internalDePath[PATH_MAX];
+    char externalPrivateMountPath[PATH_MAX];
+    snprintf(internalCePath, PATH_MAX, "/data/misc_ce");
+    snprintf(internalDePath, PATH_MAX, "/data/misc_de");
+    snprintf(externalPrivateMountPath, PATH_MAX, "/mnt/expand");
+
+    char ceUserPath[PATH_MAX];
+    char deUserPath[PATH_MAX];
+    if (volUuid != "null") {
+        snprintf(ceUserPath, PATH_MAX, "%s/%s/misc_ce/%d", externalPrivateMountPath,
+                 volUuid.c_str(), userId);
+        snprintf(deUserPath, PATH_MAX, "%s/%s/misc_de/%d", externalPrivateMountPath,
+                 volUuid.c_str(), userId);
+    } else {
+        snprintf(ceUserPath, PATH_MAX, "%s/%d", internalCePath, userId);
+        snprintf(deUserPath, PATH_MAX, "%s/%d", internalDePath, userId);
+    }
+
+    char ceSandboxPath[PATH_MAX];
+    char deSandboxPath[PATH_MAX];
+    snprintf(ceSandboxPath, PATH_MAX, "%s/sdksandbox", ceUserPath);
+    snprintf(deSandboxPath, PATH_MAX, "%s/sdksandbox", deUserPath);
+
+    // If the client app using the sandbox has been installed when the device is locked and the
+    // sandbox starts up when the device is locked, sandbox storage might not have been created.
+    // In that case, mount tmpfs for data isolation, but don't bind mount.
+    bool bindMountCeSandboxDataDirs = true;
+    bool bindMountDeSandboxDataDirs = true;
+    if (access(ceSandboxPath, F_OK) != 0) {
+        bindMountCeSandboxDataDirs = false;
+    }
+    if (access(deSandboxPath, F_OK) != 0) {
+        bindMountDeSandboxDataDirs = false;
+    }
+
+    char* context = nullptr;
+    char* userContext = nullptr;
+    char* sandboxContext = nullptr;
+    if (getfilecon(internalDePath, &context) < 0) {
+        fail_fn(CREATE_ERROR("Unable to getfilecon on %s %s", internalDePath, strerror(errno)));
+    }
+    if (bindMountDeSandboxDataDirs) {
+        if (getfilecon(deUserPath, &userContext) < 0) {
+            fail_fn(CREATE_ERROR("Unable to getfilecon on %s %s", deUserPath, strerror(errno)));
+        }
+        if (getfilecon(deSandboxPath, &sandboxContext) < 0) {
+            fail_fn(CREATE_ERROR("Unable to getfilecon on %s %s", deSandboxPath, strerror(errno)));
+        }
+    }
+
+    MountAppDataTmpFs(internalCePath, fail_fn);
+    MountAppDataTmpFs(internalDePath, fail_fn);
+
+    // Mount tmpfs on all external volumes
+    DIR* dir = opendir(externalPrivateMountPath);
+    if (dir == nullptr) {
+        fail_fn(CREATE_ERROR("Failed to opendir %s", externalPrivateMountPath));
+    }
+    struct dirent* ent;
+    while ((ent = readdir(dir))) {
+        if (strcmp(ent->d_name, ".") == 0 || strcmp(ent->d_name, "..") == 0) continue;
+        if (ent->d_type != DT_DIR) {
+            fail_fn(CREATE_ERROR("Unexpected type: %d %s", ent->d_type, ent->d_name));
+        }
+        auto volPath = StringPrintf("%s/%s", externalPrivateMountPath, ent->d_name);
+        auto externalCePath = StringPrintf("%s/misc_ce", volPath.c_str());
+        auto externalDePath = StringPrintf("%s/misc_de", volPath.c_str());
+
+        WaitUntilDirReady(externalCePath.c_str(), fail_fn);
+        MountAppDataTmpFs(externalCePath.c_str(), fail_fn);
+        WaitUntilDirReady(externalDePath.c_str(), fail_fn);
+        MountAppDataTmpFs(externalDePath.c_str(), fail_fn);
+    }
+    closedir(dir);
+
+    char mirrorCeSandboxPath[PATH_MAX];
+    char mirrorDeSandboxPath[PATH_MAX];
+    snprintf(mirrorCeSandboxPath, PATH_MAX, "/data_mirror/misc_ce/%s/%d/sdksandbox",
+             volUuid.c_str(), userId);
+    snprintf(mirrorDeSandboxPath, PATH_MAX, "/data_mirror/misc_de/%s/%d/sdksandbox",
+             volUuid.c_str(), userId);
+
+    if (bindMountCeSandboxDataDirs) {
+        PrepareDir(ceUserPath, DEFAULT_DATA_DIR_PERMISSION, AID_ROOT, AID_ROOT, fail_fn);
+        PrepareDir(ceSandboxPath, DEFAULT_DATA_DIR_PERMISSION, AID_ROOT, AID_ROOT, fail_fn);
+        // TODO(b/231322885): Use inode numbers to find the correct app path when the device locked.
+        createAndMountAppData(packageName, packageName, mirrorCeSandboxPath, ceSandboxPath, fail_fn,
+                              true /*call_fail_fn*/);
+
+        relabelDir(ceSandboxPath, sandboxContext, fail_fn);
+        relabelDir(ceUserPath, userContext, fail_fn);
+    }
+    if (bindMountDeSandboxDataDirs) {
+        PrepareDir(deUserPath, DEFAULT_DATA_DIR_PERMISSION, AID_ROOT, AID_ROOT, fail_fn);
+        PrepareDir(deSandboxPath, DEFAULT_DATA_DIR_PERMISSION, AID_ROOT, AID_ROOT, fail_fn);
+        createAndMountAppData(packageName, packageName, mirrorDeSandboxPath, deSandboxPath, fail_fn,
+                              true /*call_fail_fn*/);
+
+        relabelDir(deSandboxPath, sandboxContext, fail_fn);
+        relabelDir(deUserPath, userContext, fail_fn);
+    }
+
+    // We set the label AFTER everything is done, as we are applying
+    // the file operations on tmpfs. If we set the label when we mount
+    // tmpfs, SELinux will not happy as we are changing system_data_files.
+    relabelDir(internalCePath, context, fail_fn);
+    relabelDir(internalDePath, context, fail_fn);
+
+    // Relabel CE and DE dirs under /mnt/expand
+    dir = opendir(externalPrivateMountPath);
+    if (dir == nullptr) {
+        fail_fn(CREATE_ERROR("Failed to opendir %s", externalPrivateMountPath));
+    }
+    while ((ent = readdir(dir))) {
+        if (strcmp(ent->d_name, ".") == 0 || strcmp(ent->d_name, "..") == 0) continue;
+        auto volPath = StringPrintf("%s/%s", externalPrivateMountPath, ent->d_name);
+        auto externalCePath = StringPrintf("%s/misc_ce", volPath.c_str());
+        auto externalDePath = StringPrintf("%s/misc_de", volPath.c_str());
+        relabelDir(externalCePath.c_str(), context, fail_fn);
+        relabelDir(externalDePath.c_str(), context, fail_fn);
+    }
+    closedir(dir);
+
+    if (bindMountDeSandboxDataDirs) {
+        freecon(sandboxContext);
+        freecon(userContext);
+    }
+    freecon(context);
 }
 
 static void insertPackagesToMergedList(JNIEnv* env,
@@ -1439,6 +1602,12 @@ static void isolateJitProfile(JNIEnv* env, jobjectArray pkg_data_info_list,
   // the original profile directory anymore.
   MountAppDataTmpFs(kCurProfileDirPath, fail_fn);
   MountAppDataTmpFs(kRefProfileDirPath, fail_fn);
+
+  // Sandbox processes do not have JIT profile, so no data needs to be bind mounted. However, it
+  // should still not have access to JIT profile, so tmpfs is mounted.
+  if (is_sdk_sandbox_uid(uid)) {
+      return;
+  }
 
   // Create profile directory for this user.
   std::string actualCurUserProfile = StringPrintf("%s/%d", kCurProfileDirPath, user_id);
@@ -1592,9 +1761,15 @@ static void SpecializeCommon(JNIEnv* env, uid_t uid, gid_t gid, jintArray gids, 
     // Make sure app is running in its own mount namespace before isolating its data directories.
     ensureInAppMountNamespace(fail_fn);
 
-    // Sandbox data and jit profile directories by overlaying a tmpfs on those dirs and bind
-    // mount all related packages separately.
+    // Isolate app data, jit profile and sandbox data directories by overlaying a tmpfs on those
+    // dirs and bind mount all related packages separately.
     if (mount_data_dirs) {
+        // Sdk sandbox data isolation does not need to occur for app processes since sepolicy
+        // prevents access to sandbox data anyway.
+        if (is_sdk_sandbox_uid(uid)) {
+            isolateSdkSandboxData(env, pkg_data_info_list, uid, process_name, managed_nice_name,
+                                  fail_fn);
+        }
         isolateAppData(env, pkg_data_info_list, allowlisted_data_info_list, uid, process_name,
                        managed_nice_name, fail_fn);
         isolateJitProfile(env, pkg_data_info_list, uid, process_name, managed_nice_name, fail_fn);
@@ -1636,6 +1811,12 @@ static void SpecializeCommon(JNIEnv* env, uid_t uid, gid_t gid, jintArray gids, 
         if (env->ExceptionCheck()) {
             // Be robust here. The Java code will attempt to create the classloader
             // at a later point (but may not have rights to use AoT artifacts).
+            env->ExceptionClear();
+        }
+        // Also prefetch standalone system server jars. The reason for doing this here is the same
+        // as above.
+        env->CallStaticVoidMethod(gZygoteInitClass, gPrefetchStandaloneSystemServerJars);
+        if (env->ExceptionCheck()) {
             env->ExceptionClear();
         }
     }
@@ -1717,37 +1898,36 @@ static void SpecializeCommon(JNIEnv* env, uid_t uid, gid_t gid, jintArray gids, 
     // would be nice to have them for apps, we will have to wait until they are
     // proven out, have more efficient hardware, and/or apply them only to new
     // applications.
-    if (!(runtime_flags & RuntimeFlags::NATIVE_HEAP_ZERO_INIT)) {
+    if (!(runtime_flags & RuntimeFlags::NATIVE_HEAP_ZERO_INIT_ENABLED)) {
         mallopt(M_BIONIC_ZERO_INIT, 0);
     }
 
     // Now that we've used the flag, clear it so that we don't pass unknown flags to the ART
     // runtime.
-    runtime_flags &= ~RuntimeFlags::NATIVE_HEAP_ZERO_INIT;
+    runtime_flags &= ~RuntimeFlags::NATIVE_HEAP_ZERO_INIT_ENABLED;
 
-    bool forceEnableGwpAsan = false;
+    const char* nice_name_ptr = nice_name.has_value() ? nice_name.value().c_str() : nullptr;
+    android_mallopt_gwp_asan_options_t gwp_asan_options;
+    // The system server doesn't have its nice name set by the time SpecializeCommon is called.
+    gwp_asan_options.program_name = nice_name_ptr ?: process_name;
     switch (runtime_flags & RuntimeFlags::GWP_ASAN_LEVEL_MASK) {
         default:
         case RuntimeFlags::GWP_ASAN_LEVEL_NEVER:
+            gwp_asan_options.desire = Action::DONT_TURN_ON_UNLESS_OVERRIDDEN;
+            android_mallopt(M_INITIALIZE_GWP_ASAN, &gwp_asan_options, sizeof(gwp_asan_options));
             break;
         case RuntimeFlags::GWP_ASAN_LEVEL_ALWAYS:
-            forceEnableGwpAsan = true;
-            [[fallthrough]];
+            gwp_asan_options.desire = Action::TURN_ON_FOR_APP;
+            android_mallopt(M_INITIALIZE_GWP_ASAN, &gwp_asan_options, sizeof(gwp_asan_options));
+            break;
         case RuntimeFlags::GWP_ASAN_LEVEL_LOTTERY:
-            android_mallopt(M_INITIALIZE_GWP_ASAN, &forceEnableGwpAsan, sizeof(forceEnableGwpAsan));
+            gwp_asan_options.desire = Action::TURN_ON_WITH_SAMPLING;
+            android_mallopt(M_INITIALIZE_GWP_ASAN, &gwp_asan_options, sizeof(gwp_asan_options));
+            break;
     }
     // Now that we've used the flag, clear it so that we don't pass unknown flags to the ART
     // runtime.
     runtime_flags &= ~RuntimeFlags::GWP_ASAN_LEVEL_MASK;
-
-    if (NeedsNoRandomizeWorkaround()) {
-        // Work around ARM kernel ASLR lossage (http://b/5817320).
-        int old_personality = personality(0xffffffff);
-        int new_personality = personality(old_personality | ADDR_NO_RANDOMIZE);
-        if (new_personality == -1) {
-            ALOGW("personality(%d) failed: %s", new_personality, strerror(errno));
-        }
-    }
 
     SetCapabilities(permitted_capabilities, effective_capabilities, permitted_capabilities,
                     fail_fn);
@@ -1756,7 +1936,6 @@ static void SpecializeCommon(JNIEnv* env, uid_t uid, gid_t gid, jintArray gids, 
     AStatsSocket_close();
 
     const char* se_info_ptr = se_info.has_value() ? se_info.value().c_str() : nullptr;
-    const char* nice_name_ptr = nice_name.has_value() ? nice_name.value().c_str() : nullptr;
 
     if (selinux_android_setcontext(uid, is_system_server, se_info_ptr, nice_name_ptr) == -1) {
         fail_fn(CREATE_ERROR("selinux_android_setcontext(%d, %d, \"%s\", \"%s\") failed", uid,
@@ -2708,6 +2887,9 @@ int register_com_android_internal_os_Zygote(JNIEnv* env) {
   gGetOrCreateSystemServerClassLoader =
           GetStaticMethodIDOrDie(env, gZygoteInitClass, "getOrCreateSystemServerClassLoader",
                                  "()Ljava/lang/ClassLoader;");
+  gPrefetchStandaloneSystemServerJars =
+          GetStaticMethodIDOrDie(env, gZygoteInitClass, "prefetchStandaloneSystemServerJars",
+                                 "()V");
 
   RegisterMethodsOrDie(env, "com/android/internal/os/Zygote", gMethods, NELEM(gMethods));
 

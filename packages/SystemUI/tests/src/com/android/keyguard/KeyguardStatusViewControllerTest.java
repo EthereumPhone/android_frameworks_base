@@ -16,17 +16,21 @@
 
 package com.android.keyguard;
 
+import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
 
+import android.graphics.Rect;
 import android.test.suitebuilder.annotation.SmallTest;
 import android.testing.AndroidTestingRunner;
 
 import com.android.systemui.SysuiTestCase;
-import com.android.systemui.keyguard.KeyguardUnlockAnimationController;
-import com.android.systemui.shared.system.smartspace.SmartspaceTransitionController;
+import com.android.systemui.flags.FeatureFlags;
+import com.android.systemui.plugins.ClockAnimations;
 import com.android.systemui.statusbar.phone.DozeParameters;
-import com.android.systemui.statusbar.phone.UnlockedScreenOffAnimationController;
+import com.android.systemui.statusbar.phone.ScreenOffAnimationController;
 import com.android.systemui.statusbar.policy.ConfigurationController;
+import com.android.systemui.statusbar.policy.ConfigurationController.ConfigurationListener;
 import com.android.systemui.statusbar.policy.KeyguardStateController;
 
 import org.junit.Before;
@@ -56,11 +60,9 @@ public class KeyguardStatusViewControllerTest extends SysuiTestCase {
     @Mock
     DozeParameters mDozeParameters;
     @Mock
-    KeyguardUnlockAnimationController mKeyguardUnlockAnimationController;
+    FeatureFlags mFeatureFlags;
     @Mock
-    SmartspaceTransitionController mSmartSpaceTransitionController;
-    @Mock
-    UnlockedScreenOffAnimationController mUnlockedScreenOffAnimationController;
+    ScreenOffAnimationController mScreenOffAnimationController;
     @Captor
     private ArgumentCaptor<KeyguardUpdateMonitorCallback> mKeyguardUpdateMonitorCallbackCaptor;
 
@@ -78,9 +80,8 @@ public class KeyguardStatusViewControllerTest extends SysuiTestCase {
                 mKeyguardUpdateMonitor,
                 mConfigurationController,
                 mDozeParameters,
-                mKeyguardUnlockAnimationController,
-                mSmartSpaceTransitionController,
-                mUnlockedScreenOffAnimationController);
+                mFeatureFlags,
+                mScreenOffAnimationController);
     }
 
     @Test
@@ -96,24 +97,35 @@ public class KeyguardStatusViewControllerTest extends SysuiTestCase {
     }
 
     @Test
-    public void timeFormatUpdateNotifiesClockSwitchController() {
-        mController.onViewAttached();
+    public void setTranslationYExcludingMedia_forwardsCallToView() {
+        float translationY = 123f;
 
-        verify(mKeyguardUpdateMonitor).registerCallback(
-                mKeyguardUpdateMonitorCallbackCaptor.capture());
+        mController.setTranslationY(translationY, /* excludeMedia= */true);
 
-        mKeyguardUpdateMonitorCallbackCaptor.getValue().onTimeFormatChanged("");
-        verify(mKeyguardClockSwitchController).refreshFormat();
+        verify(mKeyguardStatusView).setChildrenTranslationY(translationY, /* excludeMedia= */true);
     }
 
     @Test
-    public void userChangeNotifiesClockSwitchController() {
+    public void onLocaleListChangedNotifiesClockSwitchController() {
+        ArgumentCaptor<ConfigurationListener> configurationListenerArgumentCaptor =
+                ArgumentCaptor.forClass(ConfigurationListener.class);
+
         mController.onViewAttached();
+        verify(mConfigurationController).addCallback(configurationListenerArgumentCaptor.capture());
 
-        verify(mKeyguardUpdateMonitor).registerCallback(
-                mKeyguardUpdateMonitorCallbackCaptor.capture());
+        configurationListenerArgumentCaptor.getValue().onLocaleListChanged();
+        verify(mKeyguardClockSwitchController).onLocaleListChanged();
+    }
 
-        mKeyguardUpdateMonitorCallbackCaptor.getValue().onUserSwitchComplete(0);
-        verify(mKeyguardClockSwitchController).refreshFormat();
+    @Test
+    public void getClockAnimations_forwardsToClockSwitch() {
+        ClockAnimations mockClockAnimations = mock(ClockAnimations.class);
+        when(mKeyguardClockSwitchController.getClockAnimations()).thenReturn(mockClockAnimations);
+
+        Rect r1 = new Rect(1, 2, 3, 4);
+        Rect r2 = new Rect(5, 6, 7, 8);
+        mController.getClockAnimations().onPositionUpdated(r1, r2, 0.3f);
+
+        verify(mockClockAnimations).onPositionUpdated(r1, r2, 0.3f);
     }
 }

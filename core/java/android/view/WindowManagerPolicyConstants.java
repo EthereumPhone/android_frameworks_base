@@ -48,6 +48,7 @@ public interface WindowManagerPolicyConstants {
     int KEYGUARD_GOING_AWAY_FLAG_NO_WINDOW_ANIMATIONS = 1 << 1;
     int KEYGUARD_GOING_AWAY_FLAG_WITH_WALLPAPER = 1 << 2;
     int KEYGUARD_GOING_AWAY_FLAG_SUBTLE_WINDOW_ANIMATIONS = 1 << 3;
+    int KEYGUARD_GOING_AWAY_FLAG_TO_LAUNCHER_CLEAR_SNAPSHOT = 1 << 4;
 
     // Flags used for indicating whether the internal and/or external input devices
     // of some type are available.
@@ -168,6 +169,9 @@ public interface WindowManagerPolicyConstants {
             case PowerManager.WAKE_REASON_POWER_BUTTON:
             case PowerManager.WAKE_REASON_PLUGGED_IN:
             case PowerManager.WAKE_REASON_GESTURE:
+            case PowerManager.WAKE_REASON_TAP:
+            case PowerManager.WAKE_REASON_LIFT:
+            case PowerManager.WAKE_REASON_BIOMETRIC:
             case PowerManager.WAKE_REASON_CAMERA_LAUNCH:
             case PowerManager.WAKE_REASON_WAKE_KEY:
             case PowerManager.WAKE_REASON_WAKE_MOTION:
@@ -236,10 +240,6 @@ public interface WindowManagerPolicyConstants {
      */
     int LAYER_OFFSET_THUMBNAIL = WINDOW_LAYER_MULTIPLIER - 1;
 
-    // TODO(b/207185041): Remove this divider workaround after we full remove leagacy split and
-    //                    make app pair split only have single root then we can just attach the
-    //                    divider to the single root task in shell.
-    int SPLIT_DIVIDER_LAYER = TYPE_LAYER_MULTIPLIER * 3;
     int WATERMARK_LAYER = TYPE_LAYER_MULTIPLIER * 100;
     int STRICT_MODE_LAYER = TYPE_LAYER_MULTIPLIER * 101;
     int WINDOW_FREEZE_LAYER = TYPE_LAYER_MULTIPLIER * 200;

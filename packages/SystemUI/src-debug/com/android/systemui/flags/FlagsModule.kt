@@ -20,16 +20,29 @@ import android.content.Context
 import android.os.Handler
 import com.android.systemui.dagger.qualifiers.Main
 import com.android.systemui.util.settings.SettingsUtilModule
+import dagger.Binds
 import dagger.Module
 import dagger.Provides
 
 @Module(includes = [
-    SettingsUtilModule::class
+    FeatureFlagsDebugStartableModule::class,
+    FlagsCommonModule::class,
+    ServerFlagReaderModule::class,
+    SettingsUtilModule::class,
 ])
-object FlagsModule {
-    @JvmStatic
-    @Provides
-    fun provideFlagManager(context: Context, @Main handler: Handler): FlagManager {
-        return FlagManager(context, handler)
+abstract class FlagsModule {
+    @Binds
+    abstract fun bindsFeatureFlagDebug(impl: FeatureFlagsDebug): FeatureFlags
+
+    @Binds
+    abstract fun bindsRestarter(debugRestarter: FeatureFlagsDebugRestarter): Restarter
+
+    @Module
+    companion object {
+        @JvmStatic
+        @Provides
+        fun provideFlagManager(context: Context, @Main handler: Handler): FlagManager {
+            return FlagManager(context, handler)
+        }
     }
 }

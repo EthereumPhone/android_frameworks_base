@@ -17,6 +17,8 @@
 package com.android.server.wm;
 
 import static android.content.pm.ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE;
+import static android.content.pm.ActivityInfo.SCREEN_ORIENTATION_LOCKED;
+import static android.content.pm.ActivityInfo.SCREEN_ORIENTATION_NOSENSOR;
 import static android.content.pm.ActivityInfo.SCREEN_ORIENTATION_PORTRAIT;
 import static android.content.pm.ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED;
 import static android.content.res.Configuration.ORIENTATION_LANDSCAPE;
@@ -41,14 +43,17 @@ import static com.google.common.truth.Truth.assertThat;
 
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.doReturn;
+import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
 
 import android.content.res.Configuration;
 import android.graphics.Rect;
 import android.os.Binder;
 import android.platform.test.annotations.Presubmit;
 import android.view.Display;
+import android.window.IDisplayAreaOrganizer;
 
 import androidx.test.filters.SmallTest;
 
@@ -160,12 +165,37 @@ public class DualDisplayAreaGroupPolicyTest extends WindowTestsBase {
     }
 
     @Test
+    public void testIgnoreOrientationRequest_displayReceiveOrientationChangeForNoSensor() {
+        mFirstRoot.setIgnoreOrientationRequest(true /* ignoreOrientationRequest */);
+        mSecondRoot.setIgnoreOrientationRequest(true /* ignoreOrientationRequest */);
+        mDisplay.onLastFocusedTaskDisplayAreaChanged(mFirstTda);
+
+        prepareUnresizable(mFirstActivity, SCREEN_ORIENTATION_NOSENSOR);
+
+        verify(mFirstRoot).onDescendantOrientationChanged(any());
+        verify(mDisplay).onDescendantOrientationChanged(any());
+    }
+
+    @Test
+    public void testIgnoreOrientationRequest_displayReceiveOrientationChangeForLocked() {
+        mFirstRoot.setIgnoreOrientationRequest(true /* ignoreOrientationRequest */);
+        mSecondRoot.setIgnoreOrientationRequest(true /* ignoreOrientationRequest */);
+        mDisplay.onLastFocusedTaskDisplayAreaChanged(mFirstTda);
+
+        prepareUnresizable(mFirstActivity, SCREEN_ORIENTATION_LOCKED);
+
+        verify(mFirstRoot).onDescendantOrientationChanged(any());
+        verify(mDisplay).onDescendantOrientationChanged(any());
+    }
+
+    @Test
     public void testLaunchPortraitApp_fillsDisplayAreaGroup() {
         mFirstRoot.setIgnoreOrientationRequest(true /* ignoreOrientationRequest */);
         mSecondRoot.setIgnoreOrientationRequest(true /* ignoreOrientationRequest */);
         mDisplay.onLastFocusedTaskDisplayAreaChanged(mFirstTda);
 
-        prepareUnresizable(mFirstActivity, SCREEN_ORIENTATION_PORTRAIT);
+        prepareLimitedBounds(mFirstActivity, SCREEN_ORIENTATION_PORTRAIT,
+                false /* isUnresizable */);
         final Rect dagBounds = new Rect(mFirstRoot.getBounds());
         final Rect taskBounds = new Rect(mFirstTask.getBounds());
         final Rect activityBounds = new Rect(mFirstActivity.getBounds());
@@ -202,12 +232,27 @@ public class DualDisplayAreaGroupPolicyTest extends WindowTestsBase {
         assertThat(newTaskBounds).isEqualTo(newDagBounds);
 
         // Activity config bounds is unchanged, size compat bounds is (860x[860x860/1200=616])
-        assertThat(mFirstActivity.getSizeCompatScale()).isLessThan(1f);
+        assertThat(mFirstActivity.getCompatScale()).isLessThan(1f);
         assertThat(activityConfigBounds.width()).isEqualTo(activityBounds.width());
         assertThat(activityConfigBounds.height()).isEqualTo(activityBounds.height());
         assertThat(activitySizeCompatBounds.height()).isEqualTo(newTaskBounds.height());
         assertThat(activitySizeCompatBounds.width()).isEqualTo(
                 newTaskBounds.height() * newTaskBounds.height() / newTaskBounds.width());
+    }
+
+    @Test
+    public void testLaunchNoSensorApp_noSizeCompatAfterRotation() {
+        mFirstRoot.setIgnoreOrientationRequest(true /* ignoreOrientationRequest */);
+        mSecondRoot.setIgnoreOrientationRequest(true /* ignoreOrientationRequest */);
+        mDisplay.onLastFocusedTaskDisplayAreaChanged(mFirstTda);
+
+        prepareUnresizable(mFirstActivity, SCREEN_ORIENTATION_NOSENSOR);
+        assertThat(mFirstActivity.isLetterboxedForFixedOrientationAndAspectRatio()).isFalse();
+        assertThat(mFirstActivity.inSizeCompatMode()).isFalse();
+
+        rotateDisplay(mDisplay, ROTATION_90);
+        assertThat(mFirstActivity.isLetterboxedForFixedOrientationAndAspectRatio()).isFalse();
+        assertThat(mFirstActivity.inSizeCompatMode()).isFalse();
     }
 
     @Test
@@ -229,6 +274,26 @@ public class DualDisplayAreaGroupPolicyTest extends WindowTestsBase {
         assertThat(activityBounds.width()).isEqualTo(dagBounds.width());
         assertThat(activityBounds.height())
                 .isEqualTo(dagBounds.width() * dagBounds.width() / dagBounds.height());
+    }
+
+    @Test
+    public void testLaunchNoSensorApp_activityIsNotLetterboxForFixedOrientationDisplayAreaGroup() {
+        mFirstRoot.setIgnoreOrientationRequest(true /* ignoreOrientationRequest */);
+        mSecondRoot.setIgnoreOrientationRequest(true /* ignoreOrientationRequest */);
+        mDisplay.onLastFocusedTaskDisplayAreaChanged(mFirstTda);
+
+        prepareUnresizable(mFirstActivity, SCREEN_ORIENTATION_NOSENSOR);
+        assertThat(mFirstActivity.isLetterboxedForFixedOrientationAndAspectRatio()).isFalse();
+    }
+
+    @Test
+    public void testLaunchLockedApp_activityIsNotLetterboxForFixedOrientationInDisplayAreaGroup() {
+        mFirstRoot.setIgnoreOrientationRequest(true /* ignoreOrientationRequest */);
+        mSecondRoot.setIgnoreOrientationRequest(true /* ignoreOrientationRequest */);
+        mDisplay.onLastFocusedTaskDisplayAreaChanged(mFirstTda);
+
+        prepareUnresizable(mFirstActivity, SCREEN_ORIENTATION_LOCKED);
+        assertThat(mFirstActivity.isLetterboxedForFixedOrientationAndAspectRatio()).isFalse();
     }
 
     @Test
@@ -258,6 +323,20 @@ public class DualDisplayAreaGroupPolicyTest extends WindowTestsBase {
         assertThat(mFirstActivity.hasSizeCompatBounds()).isFalse();
         assertThat(newActivityBounds.width()).isEqualTo(activityBounds.width());
         assertThat(newActivityBounds.height()).isEqualTo(activityBounds.height());
+    }
+
+    @Test
+    public void testLaunchNoSensorApp_fixedOrientationLetterboxBecomesSizeCompatAfterRotation() {
+        mFirstRoot.setIgnoreOrientationRequest(true /* ignoreOrientationRequest */);
+        mSecondRoot.setIgnoreOrientationRequest(true /* ignoreOrientationRequest */);
+        mDisplay.onLastFocusedTaskDisplayAreaChanged(mFirstTda);
+
+        prepareUnresizable(mFirstActivity, SCREEN_ORIENTATION_NOSENSOR);
+
+        rotateDisplay(mDisplay, ROTATION_90);
+
+        assertThat(mFirstActivity.isLetterboxedForFixedOrientationAndAspectRatio()).isFalse();
+        assertThat(mFirstActivity.inSizeCompatMode()).isFalse();
     }
 
     @Test
@@ -343,6 +422,39 @@ public class DualDisplayAreaGroupPolicyTest extends WindowTestsBase {
         verify(mSecondRoot).placeImeContainer(imeContainer);
         // verify hide() was called on InputMethodWindow.
         verify(mDisplay.mInputMethodWindow).hide(false /* doAnimation */, false /* requestAnim */);
+    }
+
+    @Test
+    public void testPlaceImeContainer_skipReparentForOrganizedImeContainer() {
+        setupImeWindow();
+        final DisplayArea.Tokens imeContainer = mDisplay.getImeContainer();
+        final WindowToken imeToken = tokenOfType(TYPE_INPUT_METHOD);
+
+        // By default, the ime container is attached to DC as defined in DAPolicy.
+        assertThat(imeContainer.getRootDisplayArea()).isEqualTo(mDisplay);
+        assertThat(mDisplay.findAreaForTokenInLayer(imeToken)).isEqualTo(imeContainer);
+
+        final WindowState firstActivityWin =
+                createWindow(null /* parent */, TYPE_APPLICATION_STARTING, mFirstActivity,
+                        "firstActivityWin");
+        spyOn(firstActivityWin);
+        // firstActivityWin should be the target
+        doReturn(true).when(firstActivityWin).canBeImeTarget();
+
+        // Main precondition for this test: organize the ImeContainer.
+        final IDisplayAreaOrganizer mockImeOrganizer = mock(IDisplayAreaOrganizer.class);
+        when(mockImeOrganizer.asBinder()).thenReturn(new Binder());
+        imeContainer.setOrganizer(mockImeOrganizer);
+
+        WindowState imeTarget = mDisplay.computeImeTarget(true /* updateImeTarget */);
+
+        // The IME target must be updated but the don't reparent organized ImeContainers.
+        // See DisplayAreaOrganizer#FEATURE_IME.
+        assertThat(imeTarget).isEqualTo(firstActivityWin);
+        verify(mFirstRoot, never()).placeImeContainer(imeContainer);
+
+        // Clean up organizer.
+        imeContainer.setOrganizer(null);
     }
 
     @Test

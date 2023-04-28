@@ -20,14 +20,16 @@ import static android.Manifest.permission.BIND_VPN_SERVICE;
 import static android.Manifest.permission.CONTROL_VPN;
 import static android.content.pm.PackageManager.PERMISSION_GRANTED;
 import static android.net.NetworkCapabilities.NET_CAPABILITY_NOT_METERED;
+import static android.net.NetworkCapabilities.NET_CAPABILITY_NOT_VPN;
 import static android.net.RouteInfo.RTN_THROW;
 import static android.net.RouteInfo.RTN_UNREACHABLE;
 import static android.net.VpnManager.NOTIFICATION_CHANNEL_VPN;
 import static android.os.PowerWhitelistManager.REASON_VPN;
 import static android.os.UserHandle.PER_USER_RANGE;
 
-import static com.android.internal.util.Preconditions.checkArgument;
-import static com.android.internal.util.Preconditions.checkNotNull;
+import static com.android.server.vcn.util.PersistableBundleUtils.STRING_DESERIALIZER;
+
+import static java.util.Objects.requireNonNull;
 
 import android.Manifest;
 import android.annotation.NonNull;
@@ -76,6 +78,7 @@ import android.net.RouteInfo;
 import android.net.UidRangeParcel;
 import android.net.UnderlyingNetworkInfo;
 import android.net.VpnManager;
+import android.net.VpnProfileState;
 import android.net.VpnService;
 import android.net.VpnTransportInfo;
 import android.net.ipsec.ike.ChildSessionCallback;
@@ -83,8 +86,14 @@ import android.net.ipsec.ike.ChildSessionConfiguration;
 import android.net.ipsec.ike.ChildSessionParams;
 import android.net.ipsec.ike.IkeSession;
 import android.net.ipsec.ike.IkeSessionCallback;
+import android.net.ipsec.ike.IkeSessionConfiguration;
+import android.net.ipsec.ike.IkeSessionConnectionInfo;
 import android.net.ipsec.ike.IkeSessionParams;
+import android.net.ipsec.ike.IkeTunnelConnectionParams;
+import android.net.ipsec.ike.exceptions.IkeNetworkLostException;
+import android.net.ipsec.ike.exceptions.IkeNonProtocolException;
 import android.net.ipsec.ike.exceptions.IkeProtocolException;
+import android.net.ipsec.ike.exceptions.IkeTimeoutException;
 import android.os.Binder;
 import android.os.Build.VERSION_CODES;
 import android.os.Bundle;
@@ -95,6 +104,7 @@ import android.os.INetworkManagementService;
 import android.os.Looper;
 import android.os.Parcel;
 import android.os.ParcelFileDescriptor;
+import android.os.PersistableBundle;
 import android.os.Process;
 import android.os.RemoteException;
 import android.os.SystemClock;
@@ -120,15 +130,18 @@ import com.android.internal.messages.nano.SystemMessageProto.SystemMessage;
 import com.android.internal.net.LegacyVpnInfo;
 import com.android.internal.net.VpnConfig;
 import com.android.internal.net.VpnProfile;
+import com.android.modules.utils.build.SdkLevel;
 import com.android.net.module.util.NetdUtils;
 import com.android.net.module.util.NetworkStackConstants;
 import com.android.server.DeviceIdleInternal;
 import com.android.server.LocalServices;
 import com.android.server.net.BaseNetworkObserver;
+import com.android.server.vcn.util.PersistableBundleUtils;
 
 import libcore.io.IoUtils;
 
 import java.io.File;
+import java.io.FileDescriptor;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
@@ -153,12 +166,14 @@ import java.util.Objects;
 import java.util.Set;
 import java.util.SortedSet;
 import java.util.TreeSet;
+import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.Executor;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
 import java.util.concurrent.RejectedExecutionException;
+import java.util.concurrent.ScheduledFuture;
+import java.util.concurrent.ScheduledThreadPoolExecutor;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 
 /**
@@ -170,13 +185,27 @@ public class Vpn {
     private static final String VPN_PROVIDER_NAME_BASE = "VpnNetworkProvider:";
     private static final boolean LOGD = true;
     private static final String ANDROID_KEYSTORE_PROVIDER = "AndroidKeyStore";
+    /** Key containing prefix of vpn app excluded list */
+    @VisibleForTesting static final String VPN_APP_EXCLUDED = "VPNAPPEXCLUDED_";
 
     // Length of time (in milliseconds) that an app hosting an always-on VPN is placed on
     // the device idle allowlist during service launch and VPN bootstrap.
     private static final long VPN_LAUNCH_IDLE_ALLOWLIST_DURATION_MS = 60 * 1000;
 
+    // Length of time (in milliseconds) that an app registered for VpnManager events is placed on
+    // the device idle allowlist each time the VpnManager event is fired.
+    private static final long VPN_MANAGER_EVENT_ALLOWLIST_DURATION_MS = 30 * 1000;
+
     private static final String LOCKDOWN_ALLOWLIST_SETTING_NAME =
             Settings.Secure.ALWAYS_ON_VPN_LOCKDOWN_WHITELIST;
+
+    /**
+     * The retries for consecutive failures.
+     *
+     * <p>If retries have exceeded the length of this array, the last entry in the array will be
+     * used as a repeating interval.
+     */
+    private static final long[] IKEV2_VPN_RETRY_DELAYS_SEC = {1L, 2L, 5L, 30L, 60L, 300L, 900L};
     /**
      * Largest profile size allowable for Platform VPNs.
      *
@@ -193,16 +222,24 @@ public class Vpn {
      */
     private static final int VPN_DEFAULT_SCORE = 101;
 
+    /**
+     * The initial token value of IKE session.
+     */
+    private static final int STARTING_TOKEN = -1;
+
     // TODO: create separate trackers for each unique VPN to support
     // automated reconnection
 
     private final Context mContext;
     private final ConnectivityManager mConnectivityManager;
+    private final AppOpsManager mAppOpsManager;
     // The context is for specific user which is created from mUserId
     private final Context mUserIdContext;
     @VisibleForTesting final Dependencies mDeps;
     private final NetworkInfo mNetworkInfo;
+    @GuardedBy("this")
     private int mLegacyState;
+    @GuardedBy("this")
     @VisibleForTesting protected String mPackage;
     private int mOwnerUID;
     private boolean mIsPackageTargetingAtLeastQ;
@@ -240,6 +277,7 @@ public class Vpn {
      * Whether to keep the connection active after rebooting, or upgrading or reinstalling. This
      * only applies to {@link VpnService} connections.
      */
+    @GuardedBy("this")
     @VisibleForTesting protected boolean mAlwaysOn = false;
 
     /**
@@ -247,6 +285,7 @@ public class Vpn {
      * apps can still bypass by choosing explicit networks. Has no effect if {@link mAlwaysOn} is
      * not set. Applies to all types of VPNs.
      */
+    @GuardedBy("this")
     @VisibleForTesting protected boolean mLockdown = false;
 
     /**
@@ -410,6 +449,79 @@ public class Vpn {
         public boolean isInterfacePresent(final Vpn vpn, final String iface) {
             return vpn.jniCheck(iface) != 0;
         }
+
+        /**
+         * @see ParcelFileDescriptor#adoptFd(int)
+         */
+        public ParcelFileDescriptor adoptFd(Vpn vpn, int mtu) {
+            return ParcelFileDescriptor.adoptFd(jniCreate(vpn, mtu));
+        }
+
+        /**
+         * Call native method to create the VPN interface and return the FileDescriptor of /dev/tun.
+         */
+        public int jniCreate(Vpn vpn, int mtu) {
+            return vpn.jniCreate(mtu);
+        }
+
+        /**
+         * Call native method to get the interface name of VPN.
+         */
+        public String jniGetName(Vpn vpn, int fd) {
+            return vpn.jniGetName(fd);
+        }
+
+        /**
+         * Call native method to set the VPN addresses and return the number of addresses.
+         */
+        public int jniSetAddresses(Vpn vpn, String interfaze, String addresses) {
+            return vpn.jniSetAddresses(interfaze, addresses);
+        }
+
+        /**
+         * @see IoUtils#setBlocking(FileDescriptor, boolean)
+         */
+        public void setBlocking(FileDescriptor fd, boolean blocking) {
+            try {
+                IoUtils.setBlocking(fd, blocking);
+            } catch (IOException e) {
+                throw new IllegalStateException(
+                        "Cannot set tunnel's fd as blocking=" + blocking, e);
+            }
+        }
+
+        /**
+         * Retrieves the next retry delay
+         *
+         * <p>If retries have exceeded the IKEV2_VPN_RETRY_DELAYS_SEC, the last entry in
+         * the array will be used as a repeating interval.
+         */
+        public long getNextRetryDelaySeconds(int retryCount) {
+            if (retryCount >= IKEV2_VPN_RETRY_DELAYS_SEC.length) {
+                return IKEV2_VPN_RETRY_DELAYS_SEC[IKEV2_VPN_RETRY_DELAYS_SEC.length - 1];
+            } else {
+                return IKEV2_VPN_RETRY_DELAYS_SEC[retryCount];
+            }
+        }
+
+        /** Get single threaded executor for IKEv2 VPN */
+        public ScheduledThreadPoolExecutor newScheduledThreadPoolExecutor() {
+            return new ScheduledThreadPoolExecutor(1);
+        }
+
+        /** Get a NetworkAgent instance */
+        public NetworkAgent newNetworkAgent(
+                @NonNull Context context,
+                @NonNull Looper looper,
+                @NonNull String logTag,
+                @NonNull NetworkCapabilities nc,
+                @NonNull LinkProperties lp,
+                @NonNull NetworkScore score,
+                @NonNull NetworkAgentConfig config,
+                @Nullable NetworkProvider provider) {
+            return new VpnNetworkAgentWrapper(
+                    context, looper, logTag, nc, lp, score, config, provider);
+        }
     }
 
     public Vpn(Looper looper, Context context, INetworkManagementService netService, INetd netd,
@@ -434,6 +546,7 @@ public class Vpn {
         mVpnProfileStore = vpnProfileStore;
         mContext = context;
         mConnectivityManager = mContext.getSystemService(ConnectivityManager.class);
+        mAppOpsManager = mContext.getSystemService(AppOpsManager.class);
         mUserIdContext = context.createContextAsUser(UserHandle.of(userId), 0 /* flags */);
         mDeps = deps;
         mNms = netService;
@@ -558,7 +671,7 @@ public class Vpn {
     }
 
     /** Returns the package name that is currently prepared. */
-    public String getPackage() {
+    public synchronized String getPackage() {
         return mPackage;
     }
 
@@ -639,6 +752,58 @@ public class Vpn {
         return true;
     }
 
+    private Intent buildVpnManagerEventIntent(@NonNull String category, int errorClass,
+            int errorCode, @NonNull final String packageName, @Nullable final String sessionKey,
+            @NonNull final VpnProfileState profileState, @Nullable final Network underlyingNetwork,
+            @Nullable final NetworkCapabilities nc, @Nullable final LinkProperties lp) {
+        final Intent intent = new Intent(VpnManager.ACTION_VPN_MANAGER_EVENT);
+        intent.setPackage(packageName);
+        intent.addCategory(category);
+        intent.putExtra(VpnManager.EXTRA_VPN_PROFILE_STATE, profileState);
+        intent.putExtra(VpnManager.EXTRA_SESSION_KEY, sessionKey);
+        intent.putExtra(VpnManager.EXTRA_UNDERLYING_NETWORK, underlyingNetwork);
+        intent.putExtra(VpnManager.EXTRA_UNDERLYING_NETWORK_CAPABILITIES, nc);
+        intent.putExtra(VpnManager.EXTRA_UNDERLYING_LINK_PROPERTIES, lp);
+        intent.putExtra(VpnManager.EXTRA_TIMESTAMP_MILLIS, System.currentTimeMillis());
+        if (!VpnManager.CATEGORY_EVENT_DEACTIVATED_BY_USER.equals(category)
+                || !VpnManager.CATEGORY_EVENT_ALWAYS_ON_STATE_CHANGED.equals(category)) {
+            intent.putExtra(VpnManager.EXTRA_ERROR_CLASS, errorClass);
+            intent.putExtra(VpnManager.EXTRA_ERROR_CODE, errorCode);
+        }
+
+        return intent;
+    }
+
+    private boolean sendEventToVpnManagerApp(@NonNull String category, int errorClass,
+            int errorCode, @NonNull final String packageName, @Nullable final String sessionKey,
+            @NonNull final VpnProfileState profileState, @Nullable final Network underlyingNetwork,
+            @Nullable final NetworkCapabilities nc, @Nullable final LinkProperties lp) {
+        final Intent intent = buildVpnManagerEventIntent(category, errorClass, errorCode,
+                packageName, sessionKey, profileState, underlyingNetwork, nc, lp);
+        return sendEventToVpnManagerApp(intent, packageName);
+    }
+
+    private boolean sendEventToVpnManagerApp(@NonNull final Intent intent,
+            @NonNull final String packageName) {
+        // Allow VpnManager app to temporarily run background services to handle this error.
+        // If an app requires anything beyond this grace period, they MUST either declare
+        // themselves as a foreground service, or schedule a job/workitem.
+        DeviceIdleInternal idleController = mDeps.getDeviceIdleInternal();
+        idleController.addPowerSaveTempWhitelistApp(Process.myUid(), packageName,
+                VPN_MANAGER_EVENT_ALLOWLIST_DURATION_MS, mUserId, false, REASON_VPN,
+                "VpnManager event");
+        try {
+            return mUserIdContext.startService(intent) != null;
+        } catch (RuntimeException e) {
+            Log.e(TAG, "Service of VpnManager app " + intent + " failed to start", e);
+            return false;
+        }
+    }
+
+    private static boolean isVpnApp(String packageName) {
+        return packageName != null && !VpnConfig.LEGACY_VPN.equals(packageName);
+    }
+
     /**
      * Configures an always-on VPN connection through a specific application. This connection is
      * automatically granted and persisted after a reboot.
@@ -661,12 +826,48 @@ public class Vpn {
             boolean lockdown,
             @Nullable List<String> lockdownAllowlist) {
         enforceControlPermissionOrInternalCaller();
+        // Store mPackage since it might be reset or might be replaced with the other VPN app.
+        final String oldPackage = mPackage;
+        final boolean isPackageChanged = !Objects.equals(packageName, oldPackage);
+        // TODO: Remove "SdkLevel.isAtLeastT()" check once VpnManagerService is decoupled from
+        //  ConnectivityServiceTest.
+        // Only notify VPN apps that were already always-on, and only if the always-on provider
+        // changed, or the lockdown mode changed.
+        final boolean shouldNotifyOldPkg = isVpnApp(oldPackage) && mAlwaysOn
+                && (lockdown != mLockdown || isPackageChanged);
+        // Also notify the new package if there was a provider change.
+        final boolean shouldNotifyNewPkg = isVpnApp(packageName) && isPackageChanged;
 
-        if (setAlwaysOnPackageInternal(packageName, lockdown, lockdownAllowlist)) {
-            saveAlwaysOnPackage();
+        if (!setAlwaysOnPackageInternal(packageName, lockdown, lockdownAllowlist)) {
+            return false;
+        }
+
+        saveAlwaysOnPackage();
+
+        // TODO(b/230548427): Remove SDK check once VPN related stuff are decoupled from
+        //  ConnectivityServiceTest.
+        if (!SdkLevel.isAtLeastT()) {
             return true;
         }
-        return false;
+
+        if (shouldNotifyOldPkg) {
+            // If both of shouldNotifyOldPkg & isPackageChanged are true, that means the
+            // always-on of old package is disabled or the old package is replaced with the new
+            // package. In this case, VpnProfileState should be disconnected.
+            sendEventToVpnManagerApp(VpnManager.CATEGORY_EVENT_ALWAYS_ON_STATE_CHANGED,
+                    -1 /* errorClass */, -1 /* errorCode*/, oldPackage,
+                    null /* sessionKey */, isPackageChanged ? makeDisconnectedVpnProfileState()
+                            : makeVpnProfileStateLocked(),
+                    null /* underlyingNetwork */, null /* nc */, null /* lp */);
+        }
+
+        if (shouldNotifyNewPkg) {
+            sendEventToVpnManagerApp(VpnManager.CATEGORY_EVENT_ALWAYS_ON_STATE_CHANGED,
+                    -1 /* errorClass */, -1 /* errorCode*/, packageName,
+                    getSessionKeyLocked(), makeVpnProfileStateLocked(),
+                    null /* underlyingNetwork */, null /* nc */, null /* lp */);
+        }
+        return true;
     }
 
     /**
@@ -829,7 +1030,6 @@ public class Vpn {
             VpnProfile profile = getVpnProfilePrivileged(alwaysOnPackage);
             if (profile != null) {
                 startVpnProfilePrivileged(profile, alwaysOnPackage);
-
                 // If the above startVpnProfilePrivileged() call returns, the Ikev2VpnProfile was
                 // correctly parsed, and the VPN has started running in a different thread. The only
                 // other possibility is that the above call threw an exception, which will be
@@ -961,6 +1161,7 @@ public class Vpn {
         return true;
     }
 
+    @GuardedBy("this")
     private boolean isCurrentPreparedPackage(String packageName) {
         // We can't just check that packageName matches mPackage, because if the app was uninstalled
         // and reinstalled it will no longer be prepared. Similarly if there is a shared UID, the
@@ -990,11 +1191,12 @@ public class Vpn {
                 } catch (Exception e) {
                     // ignore
                 }
+                mAppOpsManager.finishOp(
+                        AppOpsManager.OPSTR_ESTABLISH_VPN_SERVICE, mOwnerUID, mPackage, null);
                 mContext.unbindService(mConnection);
                 cleanupVpnStateLocked();
             } else if (mVpnRunner != null) {
-                // cleanupVpnStateLocked() is called from mVpnRunner.exit()
-                mVpnRunner.exit();
+                stopVpnRunnerAndNotifyAppLocked(mPackage);
             }
 
             try {
@@ -1057,10 +1259,8 @@ public class Vpn {
                     return false;
             }
 
-            final AppOpsManager appOpMgr =
-                    (AppOpsManager) mContext.getSystemService(Context.APP_OPS_SERVICE);
             for (final String appOpStr : toChange) {
-                appOpMgr.setMode(
+                mAppOpsManager.setMode(
                         appOpStr,
                         uid,
                         packageName,
@@ -1113,13 +1313,14 @@ public class Vpn {
             return Process.myUid();
         }
         PackageManager pm = mContext.getPackageManager();
-        return Binder.withCleanCallingIdentity(() -> {
-            try {
-                return pm.getPackageUidAsUser(app, userId);
-            } catch (NameNotFoundException e) {
-                return -1;
-            }
-        });
+        final long token = Binder.clearCallingIdentity();
+        try {
+            return pm.getPackageUidAsUser(app, userId);
+        } catch (NameNotFoundException e) {
+            return -1;
+        } finally {
+            Binder.restoreCallingIdentity(token);
+        }
     }
 
     private boolean doesPackageTargetAtLeastQ(String packageName) {
@@ -1177,8 +1378,11 @@ public class Vpn {
             for (RouteInfo route : mConfig.routes) {
                 lp.addRoute(route);
                 InetAddress address = route.getDestination().getAddress();
-                allowIPv4 |= address instanceof Inet4Address;
-                allowIPv6 |= address instanceof Inet6Address;
+
+                if (route.getType() == RouteInfo.RTN_UNICAST) {
+                    allowIPv4 |= address instanceof Inet4Address;
+                    allowIPv6 |= address instanceof Inet6Address;
+                }
             }
         }
 
@@ -1246,6 +1450,7 @@ public class Vpn {
         return true;
     }
 
+    @GuardedBy("this")
     private void agentConnect() {
         LinkProperties lp = makeLinkProperties();
 
@@ -1268,6 +1473,8 @@ public class Vpn {
                 .setLegacyType(ConnectivityManager.TYPE_VPN)
                 .setLegacyTypeName("VPN")
                 .setBypassableVpn(mConfig.allowBypass && !mLockdown)
+                .setVpnRequiresValidation(mConfig.requiresInternetValidation)
+                .setLocalRoutesExcludedForVpn(mConfig.excludeLocalRoutes)
                 .build();
 
         capsBuilder.setOwnerUid(mOwnerUID);
@@ -1285,27 +1492,24 @@ public class Vpn {
             capsBuilder.addCapability(NET_CAPABILITY_NOT_METERED);
         }
 
+        capsBuilder.setUnderlyingNetworks((mConfig.underlyingNetworks != null)
+                ? Arrays.asList(mConfig.underlyingNetworks) : null);
+
         mNetworkCapabilities = capsBuilder.build();
-        mNetworkAgent = new NetworkAgent(mContext, mLooper, NETWORKTYPE /* logtag */,
+        mNetworkAgent = mDeps.newNetworkAgent(mContext, mLooper, NETWORKTYPE /* logtag */,
                 mNetworkCapabilities, lp,
                 new NetworkScore.Builder().setLegacyInt(VPN_DEFAULT_SCORE).build(),
-                networkAgentConfig, mNetworkProvider) {
-            @Override
-            public void onNetworkUnwanted() {
-                // We are user controlled, not driven by NetworkRequest.
-            }
-        };
-        Binder.withCleanCallingIdentity(() -> {
-            try {
-                mNetworkAgent.register();
-            } catch (final Exception e) {
-                // If register() throws, don't keep an unregistered agent.
-                mNetworkAgent = null;
-                throw e;
-            }
-        });
-        mNetworkAgent.setUnderlyingNetworks((mConfig.underlyingNetworks != null)
-                ? Arrays.asList(mConfig.underlyingNetworks) : null);
+                networkAgentConfig, mNetworkProvider);
+        final long token = Binder.clearCallingIdentity();
+        try {
+            mNetworkAgent.register();
+        } catch (final Exception e) {
+            // If register() throws, don't keep an unregistered agent.
+            mNetworkAgent = null;
+            throw e;
+        } finally {
+            Binder.restoreCallingIdentity(token);
+        }
         updateState(DetailedState.CONNECTED, "agentConnect");
     }
 
@@ -1379,9 +1583,9 @@ public class Vpn {
         Set<Range<Integer>> oldUsers = mNetworkCapabilities.getUids();
 
         // Configure the interface. Abort if any of these steps fails.
-        ParcelFileDescriptor tun = ParcelFileDescriptor.adoptFd(jniCreate(config.mtu));
+        final ParcelFileDescriptor tun = mDeps.adoptFd(this, config.mtu);
         try {
-            String interfaze = jniGetName(tun.getFd());
+            final String interfaze = mDeps.jniGetName(this, tun.getFd());
 
             // TEMP use the old jni calls until there is support for netd address setting
             StringBuilder builder = new StringBuilder();
@@ -1389,7 +1593,7 @@ public class Vpn {
                 builder.append(" ");
                 builder.append(address);
             }
-            if (jniSetAddresses(interfaze, builder.toString()) < 1) {
+            if (mDeps.jniSetAddresses(this, interfaze, builder.toString()) < 1) {
                 throw new IllegalArgumentException("At least one address must be specified");
             }
             Connection connection = new Connection();
@@ -1413,7 +1617,10 @@ public class Vpn {
             // parameters. If that fails, disconnect.
             if (oldConfig != null
                     && updateLinkPropertiesInPlaceIfPossible(mNetworkAgent, oldConfig)) {
-                // Keep mNetworkAgent unchanged
+                // Update underlying networks if it is changed.
+                if (!Arrays.equals(oldConfig.underlyingNetworks, config.underlyingNetworks)) {
+                    setUnderlyingNetworks(config.underlyingNetworks);
+                }
             } else {
                 // Initialize the state for a new agent, while keeping the old one connected
                 // in case this new connection fails.
@@ -1435,11 +1642,11 @@ public class Vpn {
                 jniReset(oldInterface);
             }
 
-            try {
-                IoUtils.setBlocking(tun.getFileDescriptor(), config.blocking);
-            } catch (IOException e) {
-                throw new IllegalStateException(
-                        "Cannot set tunnel's fd as blocking=" + config.blocking, e);
+            mDeps.setBlocking(tun.getFileDescriptor(), config.blocking);
+            // Record that the VPN connection is established by an app which uses VpnService API.
+            if (oldNetworkAgent != mNetworkAgent) {
+                mAppOpsManager.startOp(
+                        AppOpsManager.OPSTR_ESTABLISH_VPN_SERVICE, mOwnerUID, mPackage, null, null);
             }
         } catch (RuntimeException e) {
             IoUtils.closeQuietly(tun);
@@ -1473,11 +1680,19 @@ public class Vpn {
     }
 
     // Note: Return type guarantees results are deduped and sorted, which callers require.
+    // This method also adds the SDK sandbox UIDs corresponding to the applications by default,
+    // since apps are generally not aware of them, yet they should follow the VPN configuration
+    // of the app they belong to.
     private SortedSet<Integer> getAppsUids(List<String> packageNames, int userId) {
         SortedSet<Integer> uids = new TreeSet<>();
         for (String app : packageNames) {
             int uid = getAppUid(app, userId);
             if (uid != -1) uids.add(uid);
+            // TODO(b/230548427): Remove SDK check once VPN related stuff are decoupled from
+            // ConnectivityServiceTest.
+            if (Process.isApplicationUid(uid) && SdkLevel.isAtLeastT()) {
+                uids.add(Process.toSdkSandboxUid(uid));
+            }
         }
         return uids;
     }
@@ -1608,7 +1823,7 @@ public class Vpn {
                         Log.wtf(TAG, "Failed to add restricted user to owner", e);
                     }
                     if (mNetworkAgent != null) {
-                        mNetworkAgent.sendNetworkCapabilities(mNetworkCapabilities);
+                        doSendNetworkCapabilities(mNetworkAgent, mNetworkCapabilities);
                     }
                 }
                 setVpnForcedLocked(mLockdown);
@@ -1638,7 +1853,7 @@ public class Vpn {
                         Log.wtf(TAG, "Failed to remove restricted user to owner", e);
                     }
                     if (mNetworkAgent != null) {
-                        mNetworkAgent.sendNetworkCapabilities(mNetworkCapabilities);
+                        doSendNetworkCapabilities(mNetworkAgent, mNetworkCapabilities);
                     }
                 }
                 setVpnForcedLocked(mLockdown);
@@ -1794,9 +2009,17 @@ public class Vpn {
             synchronized (Vpn.this) {
                 if (interfaze.equals(mInterface) && jniCheck(interfaze) == 0) {
                     if (mConnection != null) {
+                        mAppOpsManager.finishOp(
+                                AppOpsManager.OPSTR_ESTABLISH_VPN_SERVICE, mOwnerUID, mPackage,
+                                null);
                         mContext.unbindService(mConnection);
                         cleanupVpnStateLocked();
                     } else if (mVpnRunner != null) {
+                        if (!VpnConfig.LEGACY_VPN.equals(mPackage)) {
+                            mAppOpsManager.finishOp(
+                                    AppOpsManager.OPSTR_ESTABLISH_VPN_MANAGER, mOwnerUID, mPackage,
+                                    null);
+                        }
                         // cleanupVpnStateLocked() is called from mVpnRunner.exit()
                         mVpnRunner.exit();
                     }
@@ -1860,7 +2083,7 @@ public class Vpn {
             return false;
         }
         boolean success = jniAddAddress(mInterface, address, prefixLength);
-        mNetworkAgent.sendLinkProperties(makeLinkProperties());
+        doSendLinkProperties(mNetworkAgent, makeLinkProperties());
         return success;
     }
 
@@ -1869,7 +2092,7 @@ public class Vpn {
             return false;
         }
         boolean success = jniDelAddress(mInterface, address, prefixLength);
-        mNetworkAgent.sendLinkProperties(makeLinkProperties());
+        doSendLinkProperties(mNetworkAgent, makeLinkProperties());
         return success;
     }
 
@@ -1883,8 +2106,11 @@ public class Vpn {
         // Make defensive copy since the content of array might be altered by the caller.
         mConfig.underlyingNetworks =
                 (networks != null) ? Arrays.copyOf(networks, networks.length) : null;
-        mNetworkAgent.setUnderlyingNetworks((mConfig.underlyingNetworks != null)
-                ? Arrays.asList(mConfig.underlyingNetworks) : null);
+        doSetUnderlyingNetworks(
+                mNetworkAgent,
+                (mConfig.underlyingNetworks != null)
+                        ? Arrays.asList(mConfig.underlyingNetworks)
+                        : null);
         return true;
     }
 
@@ -1922,11 +2148,10 @@ public class Vpn {
     public synchronized int getActiveVpnType() {
         if (!mNetworkInfo.isConnectedOrConnecting()) return VpnManager.TYPE_VPN_NONE;
         if (mVpnRunner == null) return VpnManager.TYPE_VPN_SERVICE;
-        return mVpnRunner instanceof IkeV2VpnRunner
-                ? VpnManager.TYPE_VPN_PLATFORM
-                : VpnManager.TYPE_VPN_LEGACY;
+        return isIkev2VpnRunner() ? VpnManager.TYPE_VPN_PLATFORM : VpnManager.TYPE_VPN_LEGACY;
     }
 
+    @GuardedBy("this")
     private void updateAlwaysOnNotification(DetailedState networkState) {
         final boolean visible = (mAlwaysOn && networkState != DetailedState.CONNECTED);
 
@@ -1955,7 +2180,8 @@ public class Vpn {
                             .setCategory(Notification.CATEGORY_SYSTEM)
                             .setVisibility(Notification.VISIBILITY_PUBLIC)
                             .setOngoing(true)
-                            .setColor(mContext.getColor(R.color.system_notification_accent_color));
+                            .setColor(mContext.getColor(
+                                    android.R.color.system_notification_accent_color));
             notificationManager.notify(TAG, SystemMessage.NOTE_VPN_DISCONNECTED, builder.build());
         } finally {
             Binder.restoreCallingIdentity(token);
@@ -2040,13 +2266,16 @@ public class Vpn {
     }
 
     private void enforceNotRestrictedUser() {
-        Binder.withCleanCallingIdentity(() -> {
+        final long token = Binder.clearCallingIdentity();
+        try {
             final UserInfo user = mUserManager.getUserInfo(mUserId);
 
             if (user.isRestricted()) {
                 throw new SecurityException("Restricted users cannot configure VPNs");
             }
-        });
+        } finally {
+            Binder.restoreCallingIdentity(token);
+        }
     }
 
     /**
@@ -2193,6 +2422,11 @@ public class Vpn {
 
                 // Start VPN profile
                 profile.setAllowedAlgorithms(Ikev2VpnProfile.DEFAULT_ALGORITHMS);
+                startVpnProfilePrivileged(profile, VpnConfig.LEGACY_VPN);
+                return;
+            case VpnProfile.TYPE_IKEV2_FROM_IKE_TUN_CONN_PARAMS:
+                // All the necessary IKE options should come from IkeTunnelConnectionParams in the
+                // profile.
                 startVpnProfilePrivileged(profile, VpnConfig.LEGACY_VPN);
                 return;
             case VpnProfile.TYPE_L2TP_IPSEC_PSK:
@@ -2363,6 +2597,20 @@ public class Vpn {
         }
     }
 
+    @Nullable
+    private synchronized NetworkCapabilities getRedactedNetworkCapabilities(
+            NetworkCapabilities nc) {
+        if (nc == null) return null;
+        return mConnectivityManager.getRedactedNetworkCapabilitiesForPackage(
+                nc, mOwnerUID, mPackage);
+    }
+
+    @Nullable
+    private synchronized LinkProperties getRedactedLinkProperties(LinkProperties lp) {
+        if (lp == null) return null;
+        return mConnectivityManager.getRedactedLinkPropertiesForPackage(lp, mOwnerUID, mPackage);
+    }
+
     /** This class represents the common interface for all VPN runners. */
     @VisibleForTesting
     abstract class VpnRunner extends Thread {
@@ -2397,13 +2645,27 @@ public class Vpn {
     interface IkeV2VpnRunnerCallback {
         void onDefaultNetworkChanged(@NonNull Network network);
 
-        void onChildOpened(
-                @NonNull Network network, @NonNull ChildSessionConfiguration childConfig);
+        void onDefaultNetworkCapabilitiesChanged(@NonNull NetworkCapabilities nc);
 
-        void onChildTransformCreated(
-                @NonNull Network network, @NonNull IpSecTransform transform, int direction);
+        void onDefaultNetworkLinkPropertiesChanged(@NonNull LinkProperties lp);
 
-        void onSessionLost(@NonNull Network network, @Nullable Exception exception);
+        void onDefaultNetworkLost(@NonNull Network network);
+
+        void onIkeOpened(int token, @NonNull IkeSessionConfiguration ikeConfiguration);
+
+        void onIkeConnectionInfoChanged(
+                int token, @NonNull IkeSessionConnectionInfo ikeConnectionInfo);
+
+        void onChildOpened(int token, @NonNull ChildSessionConfiguration childConfig);
+
+        void onChildTransformCreated(int token, @NonNull IpSecTransform transform, int direction);
+
+        void onChildMigrated(
+                int token,
+                @NonNull IpSecTransform inTransform,
+                @NonNull IpSecTransform outTransform);
+
+        void onSessionLost(int token, @Nullable Exception exception);
     }
 
     /**
@@ -2434,6 +2696,10 @@ public class Vpn {
     class IkeV2VpnRunner extends VpnRunner implements IkeV2VpnRunnerCallback {
         @NonNull private static final String TAG = "IkeV2VpnRunner";
 
+        // 5 seconds grace period before tearing down the IKE Session in case new default network
+        // will come up
+        private static final long NETWORK_LOST_TIMEOUT_MS = 5000L;
+
         @NonNull private final IpSecManager mIpSecManager;
         @NonNull private final Ikev2VpnProfile mProfile;
         @NonNull private final ConnectivityManager.NetworkCallback mNetworkCallback;
@@ -2445,20 +2711,63 @@ public class Vpn {
          * of the mutable Ikev2VpnRunner fields. The Ikev2VpnRunner is built mostly lock-free by
          * virtue of everything being serialized on this executor.
          */
-        @NonNull private final ExecutorService mExecutor = Executors.newSingleThreadExecutor();
+        @NonNull private final ScheduledThreadPoolExecutor mExecutor;
+
+        @Nullable private ScheduledFuture<?> mScheduledHandleNetworkLostFuture;
+        @Nullable private ScheduledFuture<?> mScheduledHandleRetryIkeSessionFuture;
 
         /** Signal to ensure shutdown is honored even if a new Network is connected. */
         private boolean mIsRunning = true;
 
-        @Nullable private IpSecTunnelInterface mTunnelIface;
-        @Nullable private IkeSession mSession;
-        @Nullable private Network mActiveNetwork;
+        /**
+         * The token that identifies the most recently created IKE session.
+         *
+         * <p>This token is monotonically increasing and will never be reset in the lifetime of this
+         * Ikev2VpnRunner, but it does get reset across runs. It also MUST be accessed on the
+         * executor thread and updated when a new IKE session is created.
+         */
+        private int mCurrentToken = STARTING_TOKEN;
 
-        IkeV2VpnRunner(@NonNull Ikev2VpnProfile profile) {
+        @Nullable private IpSecTunnelInterface mTunnelIface;
+        @Nullable private Network mActiveNetwork;
+        @Nullable private NetworkCapabilities mUnderlyingNetworkCapabilities;
+        @Nullable private LinkProperties mUnderlyingLinkProperties;
+        private final String mSessionKey;
+
+        @Nullable private IkeSessionWrapper mSession;
+        @Nullable private IkeSessionConnectionInfo mIkeConnectionInfo;
+
+        // mMobikeEnabled can only be updated after IKE AUTH is finished.
+        private boolean mMobikeEnabled = false;
+
+        /**
+         * The number of attempts since the last successful connection.
+         *
+         * <p>This variable controls the retry delay, and is reset when a new IKE session is
+         * opened or when there is a new default network.
+         */
+        private int mRetryCount = 0;
+
+        IkeV2VpnRunner(
+                @NonNull Ikev2VpnProfile profile, @NonNull ScheduledThreadPoolExecutor executor) {
             super(TAG);
             mProfile = profile;
+            mExecutor = executor;
             mIpSecManager = (IpSecManager) mContext.getSystemService(Context.IPSEC_SERVICE);
-            mNetworkCallback = new VpnIkev2Utils.Ikev2VpnNetworkCallback(TAG, this);
+            mNetworkCallback = new VpnIkev2Utils.Ikev2VpnNetworkCallback(TAG, this, mExecutor);
+            mSessionKey = UUID.randomUUID().toString();
+
+            // Set the policy so that cancelled tasks will be removed from the work queue
+            mExecutor.setRemoveOnCancelPolicy(true);
+
+            // Set the policy so that all delayed tasks will not be executed
+            mExecutor.setExecuteExistingDelayedTasksAfterShutdownPolicy(false);
+
+            // To avoid hitting RejectedExecutionException upon shutdown of the mExecutor */
+            mExecutor.setRejectedExecutionHandler(
+                    (r, exe) -> {
+                        Log.d(TAG, "Runnable " + r + " rejected by the mExecutor");
+                    });
         }
 
         @Override
@@ -2477,6 +2786,7 @@ public class Vpn {
                 req = new NetworkRequest.Builder()
                         .clearCapabilities()
                         .addTransportType(NetworkCapabilities.TRANSPORT_TEST)
+                        .addCapability(NET_CAPABILITY_NOT_VPN)
                         .build();
             } else {
                 // Basically, the request here is referring to the default request which is defined
@@ -2496,22 +2806,64 @@ public class Vpn {
             return Objects.equals(mActiveNetwork, network) && mIsRunning;
         }
 
+        private boolean isActiveToken(int token) {
+            return (mCurrentToken == token) && mIsRunning;
+        }
+
+        /**
+         * Called when an IKE session has been opened
+         *
+         * <p>This method is only ever called once per IkeSession, and MUST run on the mExecutor
+         * thread in order to ensure consistency of the Ikev2VpnRunner fields.
+         */
+        public void onIkeOpened(int token, @NonNull IkeSessionConfiguration ikeConfiguration) {
+            if (!isActiveToken(token)) {
+                Log.d(TAG, "onIkeOpened called for obsolete token " + token);
+                return;
+            }
+
+            mMobikeEnabled =
+                    ikeConfiguration.isIkeExtensionEnabled(
+                            IkeSessionConfiguration.EXTENSION_TYPE_MOBIKE);
+            onIkeConnectionInfoChanged(token, ikeConfiguration.getIkeSessionConnectionInfo());
+            mRetryCount = 0;
+        }
+
+        /**
+         * Called when an IKE session's {@link IkeSessionConnectionInfo} is available or updated
+         *
+         * <p>This callback is usually fired when an IKE session has been opened or migrated.
+         *
+         * <p>This method is called multiple times over the lifetime of an IkeSession, and MUST run
+         * on the mExecutor thread in order to ensure consistency of the Ikev2VpnRunner fields.
+         */
+        public void onIkeConnectionInfoChanged(
+                int token, @NonNull IkeSessionConnectionInfo ikeConnectionInfo) {
+            if (!isActiveToken(token)) {
+                Log.d(TAG, "onIkeConnectionInfoChanged called for obsolete token " + token);
+                return;
+            }
+
+            // The update on VPN and the IPsec tunnel will be done when migration is fully complete
+            // in onChildMigrated
+            mIkeConnectionInfo = ikeConnectionInfo;
+        }
+
         /**
          * Called when an IKE Child session has been opened, signalling completion of the startup.
          *
          * <p>This method is only ever called once per IkeSession, and MUST run on the mExecutor
          * thread in order to ensure consistency of the Ikev2VpnRunner fields.
          */
-        public void onChildOpened(
-                @NonNull Network network, @NonNull ChildSessionConfiguration childConfig) {
-            if (!isActiveNetwork(network)) {
-                Log.d(TAG, "onOpened called for obsolete network " + network);
+        public void onChildOpened(int token, @NonNull ChildSessionConfiguration childConfig) {
+            if (!isActiveToken(token)) {
+                Log.d(TAG, "onChildOpened called for obsolete token " + token);
 
                 // Do nothing; this signals that either: (1) a new/better Network was found,
-                // and the Ikev2VpnRunner has switched to it in onDefaultNetworkChanged, or (2) this
-                // IKE session was already shut down (exited, or an error was encountered somewhere
-                // else). In both cases, all resources and sessions are torn down via
-                // resetIkeState().
+                // and the Ikev2VpnRunner has switched to it by restarting a new IKE session in
+                // onDefaultNetworkChanged, or (2) this IKE session was already shut down (exited,
+                // or an error was encountered somewhere else). In both cases, all resources and
+                // sessions are torn down via resetIkeState().
                 return;
             }
 
@@ -2530,10 +2882,18 @@ public class Vpn {
                     dnsAddrStrings.add(addr.getHostAddress());
                 }
 
+                // The actual network of this IKE session has been set up with is
+                // mIkeConnectionInfo.getNetwork() instead of mActiveNetwork because
+                // mActiveNetwork might have been updated after the setup was triggered.
+                final Network network = mIkeConnectionInfo.getNetwork();
+
                 final NetworkAgent networkAgent;
                 final LinkProperties lp;
 
                 synchronized (Vpn.this) {
+                    // Ignore stale runner.
+                    if (mVpnRunner != this) return;
+
                     mInterface = interfaceName;
                     mConfig.mtu = maxMtu;
                     mConfig.interfaze = mInterface;
@@ -2549,6 +2909,7 @@ public class Vpn {
                     mConfig.dnsServers.addAll(dnsAddrStrings);
 
                     mConfig.underlyingNetworks = new Network[] {network};
+                    mConfig.disallowedApplications = getAppExclusionList(mPackage);
 
                     networkAgent = mNetworkAgent;
 
@@ -2562,16 +2923,20 @@ public class Vpn {
                         return; // Link properties are already sent.
                     } else {
                         // Underlying networks also set in agentConnect()
-                        networkAgent.setUnderlyingNetworks(Collections.singletonList(network));
+                        doSetUnderlyingNetworks(networkAgent, Collections.singletonList(network));
+                        mNetworkCapabilities =
+                                new NetworkCapabilities.Builder(mNetworkCapabilities)
+                                        .setUnderlyingNetworks(Collections.singletonList(network))
+                                        .build();
                     }
 
                     lp = makeLinkProperties(); // Accesses VPN instance fields; must be locked
                 }
 
-                networkAgent.sendLinkProperties(lp);
+                doSendLinkProperties(networkAgent, lp);
             } catch (Exception e) {
-                Log.d(TAG, "Error in ChildOpened for network " + network, e);
-                onSessionLost(network, e);
+                Log.d(TAG, "Error in ChildOpened for token " + token, e);
+                onSessionLost(token, e);
             }
         }
 
@@ -2579,97 +2944,342 @@ public class Vpn {
          * Called when an IPsec transform has been created, and should be applied.
          *
          * <p>This method is called multiple times over the lifetime of an IkeSession (or default
-         * network), and is MUST always be called on the mExecutor thread in order to ensure
+         * network), and MUST always be called on the mExecutor thread in order to ensure
          * consistency of the Ikev2VpnRunner fields.
          */
         public void onChildTransformCreated(
-                @NonNull Network network, @NonNull IpSecTransform transform, int direction) {
-            if (!isActiveNetwork(network)) {
-                Log.d(TAG, "ChildTransformCreated for obsolete network " + network);
+                int token, @NonNull IpSecTransform transform, int direction) {
+            if (!isActiveToken(token)) {
+                Log.d(TAG, "ChildTransformCreated for obsolete token " + token);
 
                 // Do nothing; this signals that either: (1) a new/better Network was found,
-                // and the Ikev2VpnRunner has switched to it in onDefaultNetworkChanged, or (2) this
-                // IKE session was already shut down (exited, or an error was encountered somewhere
-                // else). In both cases, all resources and sessions are torn down via
-                // resetIkeState().
+                // and the Ikev2VpnRunner has switched to it by restarting a new IKE session in
+                // onDefaultNetworkChanged, or (2) this IKE session was already shut down (exited,
+                // or an error was encountered somewhere else). In both cases, all resources and
+                // sessions are torn down via resetIkeState().
                 return;
             }
 
             try {
+                mTunnelIface.setUnderlyingNetwork(mIkeConnectionInfo.getNetwork());
+
                 // Transforms do not need to be persisted; the IkeSession will keep
                 // them alive for us
                 mIpSecManager.applyTunnelModeTransform(mTunnelIface, direction, transform);
             } catch (IOException e) {
-                Log.d(TAG, "Transform application failed for network " + network, e);
-                onSessionLost(network, e);
+                Log.d(TAG, "Transform application failed for token " + token, e);
+                onSessionLost(token, e);
+            }
+        }
+
+        /**
+         * Called when an IPsec transform has been created, and should be re-applied.
+         *
+         * <p>This method is called multiple times over the lifetime of an IkeSession (or default
+         * network), and MUST always be called on the mExecutor thread in order to ensure
+         * consistency of the Ikev2VpnRunner fields.
+         */
+        public void onChildMigrated(
+                int token,
+                @NonNull IpSecTransform inTransform,
+                @NonNull IpSecTransform outTransform) {
+            if (!isActiveToken(token)) {
+                Log.d(TAG, "onChildMigrated for obsolete token " + token);
+                return;
+            }
+
+            // The actual network of this IKE session has migrated to is
+            // mIkeConnectionInfo.getNetwork() instead of mActiveNetwork because mActiveNetwork
+            // might have been updated after the migration was triggered.
+            final Network network = mIkeConnectionInfo.getNetwork();
+
+            try {
+                synchronized (Vpn.this) {
+                    // Ignore stale runner.
+                    if (mVpnRunner != this) return;
+
+                    mConfig.underlyingNetworks = new Network[] {network};
+                    mNetworkCapabilities =
+                            new NetworkCapabilities.Builder(mNetworkCapabilities)
+                                    .setUnderlyingNetworks(Collections.singletonList(network))
+                                    .build();
+                    doSetUnderlyingNetworks(mNetworkAgent, Collections.singletonList(network));
+                }
+
+                mTunnelIface.setUnderlyingNetwork(network);
+
+                // Transforms do not need to be persisted; the IkeSession will keep them alive for
+                // us
+                mIpSecManager.applyTunnelModeTransform(
+                        mTunnelIface, IpSecManager.DIRECTION_IN, inTransform);
+                mIpSecManager.applyTunnelModeTransform(
+                        mTunnelIface, IpSecManager.DIRECTION_OUT, outTransform);
+            } catch (IOException e) {
+                Log.d(TAG, "Transform application failed for token " + token, e);
+                onSessionLost(token, e);
             }
         }
 
         /**
          * Called when a new default network is connected.
          *
-         * <p>The Ikev2VpnRunner will unconditionally switch to the new network, killing the old IKE
-         * state in the process, and starting a new IkeSession instance.
+         * <p>The Ikev2VpnRunner will unconditionally switch to the new network. If the IKE session
+         * has mobility, Ikev2VpnRunner will migrate the existing IkeSession to the new network.
+         * Otherwise, Ikev2VpnRunner will kill the old IKE state, and start a new IkeSession
+         * instance.
          *
-         * <p>This method is called multiple times over the lifetime of the Ikev2VpnRunner, and is
-         * called on the ConnectivityService thread. Thus, the actual work MUST be proxied to the
-         * mExecutor thread in order to ensure consistency of the Ikev2VpnRunner fields.
+         * <p>This method MUST always be called on the mExecutor thread in order to ensure
+         * consistency of the Ikev2VpnRunner fields.
          */
         public void onDefaultNetworkChanged(@NonNull Network network) {
-            Log.d(TAG, "Starting IKEv2/IPsec session on new network: " + network);
+            Log.d(TAG, "onDefaultNetworkChanged: " + network);
 
-            // Proxy to the Ikev2VpnRunner (single-thread) executor to ensure consistency in lieu
-            // of locking.
-            mExecutor.execute(() -> {
-                try {
-                    if (!mIsRunning) {
-                        Log.d(TAG, "onDefaultNetworkChanged after exit");
-                        return; // VPN has been shut down.
-                    }
+            // If there is a new default network brought up, cancel the retry task to prevent
+            // establishing an unnecessary IKE session.
+            cancelRetryNewIkeSessionFuture();
 
-                    // Clear mInterface to prevent Ikev2VpnRunner being cleared when
-                    // interfaceRemoved() is called.
-                    mInterface = null;
-                    // Without MOBIKE, we have no way to seamlessly migrate. Close on old
-                    // (non-default) network, and start the new one.
-                    resetIkeState();
-                    mActiveNetwork = network;
+            // If there is a new default network brought up, cancel the obsolete reset and retry
+            // task.
+            cancelHandleNetworkLostTimeout();
 
-                    final IkeSessionParams ikeSessionParams =
-                            VpnIkev2Utils.buildIkeSessionParams(mContext, mProfile, network);
-                    final ChildSessionParams childSessionParams =
-                            VpnIkev2Utils.buildChildSessionParams(mProfile.getAllowedAlgorithms());
+            if (!mIsRunning) {
+                Log.d(TAG, "onDefaultNetworkChanged after exit");
+                return; // VPN has been shut down.
+            }
 
-                    // TODO: Remove the need for adding two unused addresses with
-                    // IPsec tunnels.
-                    final InetAddress address = InetAddress.getLocalHost();
-                    mTunnelIface =
-                            mIpSecManager.createIpSecTunnelInterface(
-                                    address /* unused */,
-                                    address /* unused */,
-                                    network);
-                    NetdUtils.setInterfaceUp(mNetd, mTunnelIface.getInterfaceName());
+            mActiveNetwork = network;
+            mRetryCount = 0;
 
-                    mSession = mIkev2SessionCreator.createIkeSession(
-                            mContext,
-                            ikeSessionParams,
-                            childSessionParams,
-                            mExecutor,
-                            new VpnIkev2Utils.IkeSessionCallbackImpl(
-                                    TAG, IkeV2VpnRunner.this, network),
-                            new VpnIkev2Utils.ChildSessionCallbackImpl(
-                                    TAG, IkeV2VpnRunner.this, network));
-                    Log.d(TAG, "Ike Session started for network " + network);
-                } catch (Exception e) {
-                    Log.i(TAG, "Setup failed for network " + network + ". Aborting", e);
-                    onSessionLost(network, e);
+            startOrMigrateIkeSession(network);
+        }
+
+        /**
+         * Start a new IKE session.
+         *
+         * <p>This method MUST always be called on the mExecutor thread in order to ensure
+         * consistency of the Ikev2VpnRunner fields.
+         *
+         * @param underlyingNetwork if the value is {@code null}, which means there is no active
+         *              network can be used, do nothing and return immediately. Otherwise, use the
+         *              given network to start a new IKE session.
+         */
+        private void startOrMigrateIkeSession(@Nullable Network underlyingNetwork) {
+            if (underlyingNetwork == null) {
+                Log.d(TAG, "There is no active network for starting an IKE session");
+                return;
+            }
+
+            try {
+                if (mSession != null && mMobikeEnabled) {
+                    // IKE session can schedule a migration event only when IKE AUTH is finished
+                    // and mMobikeEnabled is true.
+                    Log.d(
+                            TAG,
+                            "Migrate IKE Session with token "
+                                    + mCurrentToken
+                                    + " to network "
+                                    + underlyingNetwork);
+                    mSession.setNetwork(underlyingNetwork);
+                    return;
                 }
-            });
+
+                Log.d(TAG, "Start new IKE session on network " + underlyingNetwork);
+
+                // Clear mInterface to prevent Ikev2VpnRunner being cleared when
+                // interfaceRemoved() is called.
+                synchronized (Vpn.this) {
+                    // Ignore stale runner.
+                    if (mVpnRunner != this) return;
+
+                    mInterface = null;
+                }
+                // Without MOBIKE, we have no way to seamlessly migrate. Close on old
+                // (non-default) network, and start the new one.
+                resetIkeState();
+
+                // Get Ike options from IkeTunnelConnectionParams if it's available in the
+                // profile.
+                final IkeTunnelConnectionParams ikeTunConnParams =
+                        mProfile.getIkeTunnelConnectionParams();
+                final IkeSessionParams ikeSessionParams;
+                final ChildSessionParams childSessionParams;
+                if (ikeTunConnParams != null) {
+                    final IkeSessionParams.Builder builder = new IkeSessionParams.Builder(
+                            ikeTunConnParams.getIkeSessionParams()).setNetwork(underlyingNetwork);
+                    ikeSessionParams = builder.build();
+                    childSessionParams = ikeTunConnParams.getTunnelModeChildSessionParams();
+                } else {
+                    ikeSessionParams = VpnIkev2Utils.buildIkeSessionParams(
+                            mContext, mProfile, underlyingNetwork);
+                    childSessionParams = VpnIkev2Utils.buildChildSessionParams(
+                            mProfile.getAllowedAlgorithms());
+                }
+
+                // TODO: Remove the need for adding two unused addresses with
+                // IPsec tunnels.
+                final InetAddress address = InetAddress.getLocalHost();
+
+                // When onChildOpened is called and transforms are applied, it is
+                // guaranteed that the underlying network is still "network", because the
+                // all the network switch events will be deferred before onChildOpened is
+                // called. Thus it is safe to build a mTunnelIface before IKE setup.
+                mTunnelIface =
+                        mIpSecManager.createIpSecTunnelInterface(
+                                address /* unused */, address /* unused */, underlyingNetwork);
+                NetdUtils.setInterfaceUp(mNetd, mTunnelIface.getInterfaceName());
+
+                final int token = ++mCurrentToken;
+                mSession =
+                        mIkev2SessionCreator.createIkeSession(
+                                mContext,
+                                ikeSessionParams,
+                                childSessionParams,
+                                mExecutor,
+                                new VpnIkev2Utils.IkeSessionCallbackImpl(
+                                        TAG, IkeV2VpnRunner.this, token),
+                                new VpnIkev2Utils.ChildSessionCallbackImpl(
+                                        TAG, IkeV2VpnRunner.this, token));
+                Log.d(TAG, "IKE session started for token " + token);
+            } catch (Exception e) {
+                Log.i(TAG, "Setup failed for token " + mCurrentToken + ". Aborting", e);
+                onSessionLost(mCurrentToken, e);
+            }
+        }
+
+        private void scheduleRetryNewIkeSession() {
+            final long retryDelay = mDeps.getNextRetryDelaySeconds(mRetryCount++);
+            Log.d(TAG, "Retry new IKE session after " + retryDelay + " seconds.");
+            // If the default network is lost during the retry delay, the mActiveNetwork will be
+            // null, and the new IKE session won't be established until there is a new default
+            // network bringing up.
+            mScheduledHandleRetryIkeSessionFuture =
+                    mExecutor.schedule(() -> {
+                        startOrMigrateIkeSession(mActiveNetwork);
+
+                        // Reset mScheduledHandleRetryIkeSessionFuture since it's already run on
+                        // executor thread.
+                        mScheduledHandleRetryIkeSessionFuture = null;
+                    }, retryDelay, TimeUnit.SECONDS);
+        }
+
+        /** Called when the NetworkCapabilities of underlying network is changed */
+        public void onDefaultNetworkCapabilitiesChanged(@NonNull NetworkCapabilities nc) {
+            mUnderlyingNetworkCapabilities = nc;
+        }
+
+        /** Called when the LinkProperties of underlying network is changed */
+        public void onDefaultNetworkLinkPropertiesChanged(@NonNull LinkProperties lp) {
+            mUnderlyingLinkProperties = lp;
+        }
+
+        /**
+         * Handles loss of the default underlying network
+         *
+         * <p>If the IKE Session has mobility, Ikev2VpnRunner will schedule a teardown event with a
+         * delay so that the IKE Session can migrate if a new network is available soon. Otherwise,
+         * Ikev2VpnRunner will kill the IKE session and reset the VPN.
+         *
+         * <p>This method MUST always be called on the mExecutor thread in order to ensure
+         * consistency of the Ikev2VpnRunner fields.
+         */
+        public void onDefaultNetworkLost(@NonNull Network network) {
+            // If the default network is torn down, there is no need to call
+            // startOrMigrateIkeSession() since it will always check if there is an active network
+            // can be used or not.
+            cancelRetryNewIkeSessionFuture();
+
+            if (!isActiveNetwork(network)) {
+                Log.d(TAG, "onDefaultNetworkLost called for obsolete network " + network);
+
+                // Do nothing; this signals that either: (1) a new/better Network was found,
+                // and the Ikev2VpnRunner has switched to it by restarting a new IKE session in
+                // onDefaultNetworkChanged, or (2) this IKE session was already shut down (exited,
+                // or an error was encountered somewhere else). In both cases, all resources and
+                // sessions are torn down via resetIkeState().
+                return;
+            } else {
+                mActiveNetwork = null;
+            }
+
+            if (mScheduledHandleNetworkLostFuture != null) {
+                final IllegalStateException exception =
+                        new IllegalStateException(
+                                "Found a pending mScheduledHandleNetworkLostFuture");
+                Log.i(
+                        TAG,
+                        "Unexpected error in onDefaultNetworkLost. Tear down session",
+                        exception);
+                handleSessionLost(exception, network);
+                return;
+            }
+
+            if (mSession != null && mMobikeEnabled) {
+                Log.d(
+                        TAG,
+                        "IKE Session has mobility. Delay handleSessionLost for losing network "
+                                + network
+                                + " on session with token "
+                                + mCurrentToken);
+
+                final int token = mCurrentToken;
+                // Delay the teardown in case a new network will be available soon. For example,
+                // during handover between two WiFi networks, Android will disconnect from the
+                // first WiFi and then connects to the second WiFi.
+                mScheduledHandleNetworkLostFuture =
+                        mExecutor.schedule(
+                                () -> {
+                                    if (isActiveToken(token)) {
+                                        handleSessionLost(null /* exception */, network);
+                                    } else {
+                                        Log.d(
+                                                TAG,
+                                                "Scheduled handleSessionLost fired for "
+                                                        + "obsolete token "
+                                                        + token);
+                                    }
+
+                                    // Reset mScheduledHandleNetworkLostFuture since it's
+                                    // already run on executor thread.
+                                    mScheduledHandleNetworkLostFuture = null;
+                                },
+                                NETWORK_LOST_TIMEOUT_MS,
+                                TimeUnit.MILLISECONDS);
+            } else {
+                Log.d(TAG, "Call handleSessionLost for losing network " + network);
+                handleSessionLost(null /* exception */, network);
+            }
+        }
+
+        private void cancelHandleNetworkLostTimeout() {
+            if (mScheduledHandleNetworkLostFuture != null) {
+                // It does not matter what to put in #cancel(boolean), because it is impossible
+                // that the task tracked by mScheduledHandleNetworkLostFuture is
+                // in-progress since both that task and onDefaultNetworkChanged are submitted to
+                // mExecutor who has only one thread.
+                Log.d(TAG, "Cancel the task for handling network lost timeout");
+                mScheduledHandleNetworkLostFuture.cancel(false /* mayInterruptIfRunning */);
+                mScheduledHandleNetworkLostFuture = null;
+            }
+        }
+
+        private void cancelRetryNewIkeSessionFuture() {
+            if (mScheduledHandleRetryIkeSessionFuture != null) {
+                // It does not matter what to put in #cancel(boolean), because it is impossible
+                // that the task tracked by mScheduledHandleRetryIkeSessionFuture is
+                // in-progress since both that task and onDefaultNetworkChanged are submitted to
+                // mExecutor who has only one thread.
+                Log.d(TAG, "Cancel the task for handling new ike session timeout");
+                mScheduledHandleRetryIkeSessionFuture.cancel(false /* mayInterruptIfRunning */);
+                mScheduledHandleRetryIkeSessionFuture = null;
+            }
         }
 
         /** Marks the state as FAILED, and disconnects. */
         private void markFailedAndDisconnect(Exception exception) {
             synchronized (Vpn.this) {
+                // Ignore stale runner.
+                if (mVpnRunner != this) return;
+
                 updateState(DetailedState.FAILED, exception.getMessage());
             }
 
@@ -2685,20 +3295,41 @@ public class Vpn {
          * <p>This method MUST always be called on the mExecutor thread in order to ensure
          * consistency of the Ikev2VpnRunner fields.
          */
-        public void onSessionLost(@NonNull Network network, @Nullable Exception exception) {
-            if (!isActiveNetwork(network)) {
-                Log.d(TAG, "onSessionLost() called for obsolete network " + network);
+        public void onSessionLost(int token, @Nullable Exception exception) {
+            Log.d(TAG, "onSessionLost() called for token " + token);
+
+            if (!isActiveToken(token)) {
+                Log.d(TAG, "onSessionLost() called for obsolete token " + token);
 
                 // Do nothing; this signals that either: (1) a new/better Network was found,
-                // and the Ikev2VpnRunner has switched to it in onDefaultNetworkChanged, or (2) this
-                // IKE session was already shut down (exited, or an error was encountered somewhere
-                // else). In both cases, all resources and sessions are torn down via
-                // onSessionLost() and resetIkeState().
+                // and the Ikev2VpnRunner has switched to it by restarting a new IKE session in
+                // onDefaultNetworkChanged, or (2) this IKE session was already shut down (exited,
+                // or an error was encountered somewhere else). In both cases, all resources and
+                // sessions are torn down via resetIkeState().
+                return;
+            }
+
+            handleSessionLost(exception, mActiveNetwork);
+        }
+
+        private void handleSessionLost(@Nullable Exception exception, @Nullable Network network) {
+            // Cancel mScheduledHandleNetworkLostFuture if the session it is going to terminate is
+            // already terminated due to other failures.
+            cancelHandleNetworkLostTimeout();
+
+            String category = null;
+            int errorClass = -1;
+            int errorCode = -1;
+            if (exception instanceof IllegalArgumentException) {
+                // Failed to build IKE/ChildSessionParams; fatal profile configuration error
+                markFailedAndDisconnect(exception);
                 return;
             }
 
             if (exception instanceof IkeProtocolException) {
                 final IkeProtocolException ikeException = (IkeProtocolException) exception;
+                category = VpnManager.CATEGORY_EVENT_IKE_ERROR;
+                errorCode = ikeException.getErrorType();
 
                 switch (ikeException.getErrorType()) {
                     case IkeProtocolException.ERROR_TYPE_NO_PROPOSAL_CHOSEN: // Fallthrough
@@ -2708,23 +3339,63 @@ public class Vpn {
                     case IkeProtocolException.ERROR_TYPE_FAILED_CP_REQUIRED: // Fallthrough
                     case IkeProtocolException.ERROR_TYPE_TS_UNACCEPTABLE:
                         // All the above failures are configuration errors, and are terminal
-                        markFailedAndDisconnect(exception);
-                        return;
+                        errorClass = VpnManager.ERROR_CLASS_NOT_RECOVERABLE;
+                        break;
                     // All other cases possibly recoverable.
+                    default:
+                        errorClass = VpnManager.ERROR_CLASS_RECOVERABLE;
                 }
-            } else if (exception instanceof IllegalArgumentException) {
-                // Failed to build IKE/ChildSessionParams; fatal profile configuration error
-                markFailedAndDisconnect(exception);
-                return;
+            } else if (exception instanceof IkeNetworkLostException) {
+                category = VpnManager.CATEGORY_EVENT_NETWORK_ERROR;
+                errorClass = VpnManager.ERROR_CLASS_RECOVERABLE;
+                errorCode = VpnManager.ERROR_CODE_NETWORK_LOST;
+            } else if (exception instanceof IkeNonProtocolException) {
+                category = VpnManager.CATEGORY_EVENT_NETWORK_ERROR;
+                errorClass = VpnManager.ERROR_CLASS_RECOVERABLE;
+                if (exception.getCause() instanceof UnknownHostException) {
+                    errorCode = VpnManager.ERROR_CODE_NETWORK_UNKNOWN_HOST;
+                } else if (exception.getCause() instanceof IkeTimeoutException) {
+                    errorCode = VpnManager.ERROR_CODE_NETWORK_PROTOCOL_TIMEOUT;
+                } else if (exception.getCause() instanceof IOException) {
+                    errorCode = VpnManager.ERROR_CODE_NETWORK_IO;
+                }
+            } else if (exception != null) {
+                Log.wtf(TAG, "onSessionLost: exception = " + exception);
             }
 
-            mActiveNetwork = null;
+            synchronized (Vpn.this) {
+                // Ignore stale runner.
+                if (mVpnRunner != this) return;
+
+                // TODO(b/230548427): Remove SDK check once VPN related stuff are
+                //  decoupled from ConnectivityServiceTest.
+                if (SdkLevel.isAtLeastT() && category != null && isVpnApp(mPackage)) {
+                    sendEventToVpnManagerApp(category, errorClass, errorCode,
+                            getPackage(), mSessionKey, makeVpnProfileStateLocked(),
+                            mActiveNetwork,
+                            getRedactedNetworkCapabilities(mUnderlyingNetworkCapabilities),
+                            getRedactedLinkProperties(mUnderlyingLinkProperties));
+                }
+            }
+
+            if (errorClass == VpnManager.ERROR_CLASS_NOT_RECOVERABLE) {
+                markFailedAndDisconnect(exception);
+                return;
+            } else {
+                scheduleRetryNewIkeSession();
+            }
+
+            mUnderlyingNetworkCapabilities = null;
+            mUnderlyingLinkProperties = null;
 
             // Close all obsolete state, but keep VPN alive incase a usable network comes up.
             // (Mirrors VpnService behavior)
-            Log.d(TAG, "Resetting state for network: " + network);
+            Log.d(TAG, "Resetting state for token: " + mCurrentToken);
 
             synchronized (Vpn.this) {
+                // Ignore stale runner.
+                if (mVpnRunner != this) return;
+
                 // Since this method handles non-fatal errors only, set mInterface to null to
                 // prevent the NetworkManagementEventObserver from killing this VPN based on the
                 // interface going down (which we expect).
@@ -2742,7 +3413,7 @@ public class Vpn {
                                     null /*gateway*/, null /*iface*/, RTN_UNREACHABLE));
                         }
                         if (mNetworkAgent != null) {
-                            mNetworkAgent.sendLinkProperties(makeLinkProperties());
+                            doSendLinkProperties(mNetworkAgent, makeLinkProperties());
                         }
                     }
                 }
@@ -2767,6 +3438,8 @@ public class Vpn {
                 mSession.kill(); // Kill here to make sure all resources are released immediately
                 mSession = null;
             }
+            mIkeConnectionInfo = null;
+            mMobikeEnabled = false;
         }
 
         /**
@@ -2783,6 +3456,8 @@ public class Vpn {
          */
         private void disconnectVpnRunner() {
             mActiveNetwork = null;
+            mUnderlyingNetworkCapabilities = null;
+            mUnderlyingLinkProperties = null;
             mIsRunning = false;
 
             resetIkeState();
@@ -2849,8 +3524,10 @@ public class Vpn {
 
         LegacyVpnRunner(VpnConfig config, String[] racoon, String[] mtpd, VpnProfile profile) {
             super(TAG);
-            checkArgument(racoon != null || mtpd != null, "Arguments to racoon and mtpd "
-                    + "must not both be null");
+            if (racoon == null && mtpd == null) {
+                throw new IllegalArgumentException(
+                        "Arguments to racoon and mtpd must not both be null");
+            }
             mConfig = config;
             mDaemons = new String[] {"racoon", "mtpd"};
             // TODO: clear arguments from memory once launched
@@ -3156,6 +3833,7 @@ public class Vpn {
             case VpnProfile.TYPE_IKEV2_IPSEC_USER_PASS:
             case VpnProfile.TYPE_IKEV2_IPSEC_PSK:
             case VpnProfile.TYPE_IKEV2_IPSEC_RSA:
+            case VpnProfile.TYPE_IKEV2_FROM_IKE_TUN_CONN_PARAMS:
                 if (!mContext.getPackageManager().hasSystemFeature(
                         PackageManager.FEATURE_IPSEC_TUNNELS)) {
                     throw new UnsupportedOperationException(
@@ -3176,8 +3854,8 @@ public class Vpn {
      */
     public synchronized boolean provisionVpnProfile(
             @NonNull String packageName, @NonNull VpnProfile profile) {
-        checkNotNull(packageName, "No package name provided");
-        checkNotNull(profile, "No profile provided");
+        requireNonNull(packageName, "No package name provided");
+        requireNonNull(profile, "No profile provided");
 
         verifyCallingUidAndPackage(packageName);
         enforceNotRestrictedUser();
@@ -3194,12 +3872,12 @@ public class Vpn {
         }
 
         // Permissions checked during startVpnProfile()
-        Binder.withCleanCallingIdentity(
-                () -> {
-                    getVpnProfileStore().put(
-                            getProfileNameForPackage(packageName),
-                            encodedProfile);
-                });
+        final long token = Binder.clearCallingIdentity();
+        try {
+            getVpnProfileStore().put(getProfileNameForPackage(packageName), encodedProfile);
+        } finally {
+            Binder.restoreCallingIdentity(token);
+        }
 
         // TODO: if package has CONTROL_VPN, grant the ACTIVATE_PLATFORM_VPN appop.
         // This mirrors the prepareAndAuthorize that is used by VpnService.
@@ -3209,7 +3887,7 @@ public class Vpn {
     }
 
     private boolean isCurrentIkev2VpnLocked(@NonNull String packageName) {
-        return isCurrentPreparedPackage(packageName) && mVpnRunner instanceof IkeV2VpnRunner;
+        return isCurrentPreparedPackage(packageName) && isIkev2VpnRunner();
     }
 
     /**
@@ -3219,26 +3897,28 @@ public class Vpn {
      */
     public synchronized void deleteVpnProfile(
             @NonNull String packageName) {
-        checkNotNull(packageName, "No package name provided");
+        requireNonNull(packageName, "No package name provided");
 
         verifyCallingUidAndPackage(packageName);
         enforceNotRestrictedUser();
 
-        Binder.withCleanCallingIdentity(
-                () -> {
-                    // If this profile is providing the current VPN, turn it off, disabling
-                    // always-on as well if enabled.
-                    if (isCurrentIkev2VpnLocked(packageName)) {
-                        if (mAlwaysOn) {
-                            // Will transitively call prepareInternal(VpnConfig.LEGACY_VPN).
-                            setAlwaysOnPackage(null, false, null);
-                        } else {
-                            prepareInternal(VpnConfig.LEGACY_VPN);
-                        }
-                    }
+        final long token = Binder.clearCallingIdentity();
+        try {
+            // If this profile is providing the current VPN, turn it off, disabling
+            // always-on as well if enabled.
+            if (isCurrentIkev2VpnLocked(packageName)) {
+                if (mAlwaysOn) {
+                    // Will transitively call prepareInternal(VpnConfig.LEGACY_VPN).
+                    setAlwaysOnPackage(null, false, null);
+                } else {
+                    prepareInternal(VpnConfig.LEGACY_VPN);
+                }
+            }
 
-                    getVpnProfileStore().remove(getProfileNameForPackage(packageName));
-                });
+            getVpnProfileStore().remove(getProfileNameForPackage(packageName));
+        } finally {
+            Binder.restoreCallingIdentity(token);
+        }
     }
 
     /**
@@ -3261,6 +3941,16 @@ public class Vpn {
         return VpnProfile.decode("" /* Key unused */, encoded);
     }
 
+    private boolean isIkev2VpnRunner() {
+        return (mVpnRunner instanceof IkeV2VpnRunner);
+    }
+
+    @GuardedBy("this")
+    @Nullable
+    private String getSessionKeyLocked() {
+        return isIkev2VpnRunner() ? ((IkeV2VpnRunner) mVpnRunner).mSessionKey : null;
+    }
+
     /**
      * Starts an already provisioned VPN Profile, keyed by package name.
      *
@@ -3270,9 +3960,8 @@ public class Vpn {
      *
      * @param packageName the package name of the app provisioning this profile
      */
-    public synchronized void startVpnProfile(
-            @NonNull String packageName) {
-        checkNotNull(packageName, "No package name provided");
+    public synchronized String startVpnProfile(@NonNull String packageName) {
+        requireNonNull(packageName, "No package name provided");
 
         enforceNotRestrictedUser();
 
@@ -3281,15 +3970,22 @@ public class Vpn {
             throw new SecurityException("User consent not granted for package " + packageName);
         }
 
-        Binder.withCleanCallingIdentity(
-                () -> {
-                    final VpnProfile profile = getVpnProfilePrivileged(packageName);
-                    if (profile == null) {
-                        throw new IllegalArgumentException("No profile found for " + packageName);
-                    }
+        final long token = Binder.clearCallingIdentity();
+        try {
+            final VpnProfile profile = getVpnProfilePrivileged(packageName);
+            if (profile == null) {
+                throw new IllegalArgumentException("No profile found for " + packageName);
+            }
 
-                    startVpnProfilePrivileged(profile, packageName);
-                });
+            startVpnProfilePrivileged(profile, packageName);
+            if (!isIkev2VpnRunner()) {
+                throw new IllegalStateException("mVpnRunner shouldn't be null and should also be "
+                        + "an instance of Ikev2VpnRunner");
+            }
+            return getSessionKeyLocked();
+        } finally {
+            Binder.restoreCallingIdentity(token);
+        }
     }
 
     private synchronized void startVpnProfilePrivileged(
@@ -3318,13 +4014,19 @@ public class Vpn {
             }
             mConfig.startTime = SystemClock.elapsedRealtime();
             mConfig.proxyInfo = profile.proxy;
+            mConfig.requiresInternetValidation = profile.requiresInternetValidation;
+            mConfig.excludeLocalRoutes = profile.excludeLocalRoutes;
+            mConfig.allowBypass = profile.isBypassable;
 
             switch (profile.type) {
                 case VpnProfile.TYPE_IKEV2_IPSEC_USER_PASS:
                 case VpnProfile.TYPE_IKEV2_IPSEC_PSK:
                 case VpnProfile.TYPE_IKEV2_IPSEC_RSA:
+                case VpnProfile.TYPE_IKEV2_FROM_IKE_TUN_CONN_PARAMS:
                     mVpnRunner =
-                            new IkeV2VpnRunner(Ikev2VpnProfile.fromVpnProfile(profile));
+                            new IkeV2VpnRunner(
+                                    Ikev2VpnProfile.fromVpnProfile(profile),
+                                    mDeps.newScheduledThreadPoolExecutor());
                     mVpnRunner.start();
                     break;
                 default:
@@ -3332,12 +4034,42 @@ public class Vpn {
                     Log.d(TAG, "Unknown VPN profile type: " + profile.type);
                     break;
             }
+
+            // Record that the VPN connection is established by an app which uses VpnManager API.
+            if (!VpnConfig.LEGACY_VPN.equals(packageName)) {
+                mAppOpsManager.startOp(
+                        AppOpsManager.OPSTR_ESTABLISH_VPN_MANAGER, mOwnerUID, mPackage, null,
+                        null);
+            }
         } catch (GeneralSecurityException e) {
             // Reset mConfig
             mConfig = null;
 
             updateState(DetailedState.FAILED, "VPN startup failed");
             throw new IllegalArgumentException("VPN startup failed", e);
+        }
+    }
+
+    @GuardedBy("this")
+    private void stopVpnRunnerAndNotifyAppLocked(@NonNull String packageName) {
+        // Build intent first because the sessionKey will be reset after performing
+        // VpnRunner.exit(). Also, cache mOwnerUID even if ownerUID will not be changed in
+        // VpnRunner.exit() to prevent design being changed in the future.
+        // TODO(b/230548427): Remove SDK check once VPN related stuff are decoupled from
+        //  ConnectivityServiceTest.
+        final int ownerUid = mOwnerUID;
+        Intent intent = null;
+        if (SdkLevel.isAtLeastT() && isVpnApp(packageName)) {
+            intent = buildVpnManagerEventIntent(
+                    VpnManager.CATEGORY_EVENT_DEACTIVATED_BY_USER,
+                    -1 /* errorClass */, -1 /* errorCode*/, packageName,
+                    getSessionKeyLocked(), makeVpnProfileStateLocked(),
+                    null /* underlyingNetwork */, null /* nc */, null /* lp */);
+        }
+        // cleanupVpnStateLocked() is called from mVpnRunner.exit()
+        mVpnRunner.exit();
+        if (intent != null && isVpnApp(packageName)) {
+            notifyVpnManagerVpnStopped(packageName, ownerUid, intent);
         }
     }
 
@@ -3350,14 +4082,268 @@ public class Vpn {
      * @param packageName the package name of the app provisioning this profile
      */
     public synchronized void stopVpnProfile(@NonNull String packageName) {
-        checkNotNull(packageName, "No package name provided");
+        requireNonNull(packageName, "No package name provided");
 
         enforceNotRestrictedUser();
 
         // To stop the VPN profile, the caller must be the current prepared package and must be
         // running an Ikev2VpnProfile.
         if (isCurrentIkev2VpnLocked(packageName)) {
-            prepareInternal(VpnConfig.LEGACY_VPN);
+            stopVpnRunnerAndNotifyAppLocked(packageName);
+        }
+    }
+
+    private synchronized void notifyVpnManagerVpnStopped(String packageName, int ownerUID,
+            Intent intent) {
+        mAppOpsManager.finishOp(
+                AppOpsManager.OPSTR_ESTABLISH_VPN_MANAGER, ownerUID, packageName, null);
+        // The underlying network, NetworkCapabilities and LinkProperties are not
+        // necessary to send to VPN app since the purpose of this event is to notify
+        // VPN app that VPN is deactivated by the user.
+        // TODO(b/230548427): Remove SDK check once VPN related stuff are decoupled from
+        //  ConnectivityServiceTest.
+        if (SdkLevel.isAtLeastT()) {
+            sendEventToVpnManagerApp(intent, packageName);
+        }
+    }
+
+    private boolean storeAppExclusionList(@NonNull String packageName,
+            @NonNull List<String> excludedApps) {
+        byte[] data;
+        try {
+            final PersistableBundle bundle = PersistableBundleUtils.fromList(
+                    excludedApps, PersistableBundleUtils.STRING_SERIALIZER);
+            data = PersistableBundleUtils.toDiskStableBytes(bundle);
+        } catch (IOException e) {
+            Log.e(TAG, "problem writing into stream", e);
+            return false;
+        }
+
+        final long oldId = Binder.clearCallingIdentity();
+        try {
+            getVpnProfileStore().put(getVpnAppExcludedForPackage(packageName), data);
+        } finally {
+            Binder.restoreCallingIdentity(oldId);
+        }
+        return true;
+    }
+
+    @VisibleForTesting
+    String getVpnAppExcludedForPackage(String packageName) {
+        return VPN_APP_EXCLUDED + mUserId + "_" + packageName;
+    }
+
+    /**
+     * Set the application exclusion list for the specified VPN profile.
+     *
+     * @param packageName the package name of the app provisioning this profile
+     * @param excludedApps the list of excluded packages
+     *
+     * @return whether setting the list is successful or not
+     */
+    public synchronized boolean setAppExclusionList(@NonNull String packageName,
+            @NonNull List<String> excludedApps) {
+        enforceNotRestrictedUser();
+        if (!storeAppExclusionList(packageName, excludedApps)) return false;
+
+        updateAppExclusionList(excludedApps);
+
+        return true;
+    }
+
+    /**
+     * Triggers an update of the VPN network's excluded UIDs if a VPN is running.
+     */
+    public synchronized void refreshPlatformVpnAppExclusionList() {
+        updateAppExclusionList(getAppExclusionList(mPackage));
+    }
+
+    private synchronized void updateAppExclusionList(@NonNull List<String> excludedApps) {
+        // Re-build and update NetworkCapabilities via NetworkAgent.
+        if (mNetworkAgent != null) {
+            // Only update the platform VPN
+            if (isIkev2VpnRunner()) {
+                mConfig.disallowedApplications = List.copyOf(excludedApps);
+                mNetworkCapabilities = new NetworkCapabilities.Builder(mNetworkCapabilities)
+                        .setUids(createUserAndRestrictedProfilesRanges(
+                                mUserId, null /* allowedApplications */, excludedApps))
+                        .build();
+                doSendNetworkCapabilities(mNetworkAgent, mNetworkCapabilities);
+            }
+        }
+    }
+
+    /**
+     * Gets the application exclusion list for the specified VPN profile.
+     *
+     * @param packageName the package name of the app provisioning this profile
+     * @return the list of excluded packages for the specified VPN profile or empty list if there is
+     *         no provisioned VPN profile.
+     */
+    @NonNull
+    public synchronized List<String> getAppExclusionList(@NonNull String packageName) {
+        final long oldId = Binder.clearCallingIdentity();
+        try {
+            final byte[] bytes = getVpnProfileStore().get(getVpnAppExcludedForPackage(packageName));
+
+            if (bytes == null || bytes.length == 0) return new ArrayList<>();
+
+            final PersistableBundle bundle = PersistableBundleUtils.fromDiskStableBytes(bytes);
+            return PersistableBundleUtils.toList(bundle, STRING_DESERIALIZER);
+        } catch (IOException e) {
+            Log.e(TAG, "problem reading from stream", e);
+        }  finally {
+            Binder.restoreCallingIdentity(oldId);
+        }
+
+        return new ArrayList<>();
+    }
+
+    private @VpnProfileState.State int getStateFromLegacyState(int legacyState) {
+        switch (legacyState) {
+            case LegacyVpnInfo.STATE_CONNECTING:
+                return VpnProfileState.STATE_CONNECTING;
+            case LegacyVpnInfo.STATE_CONNECTED:
+                return VpnProfileState.STATE_CONNECTED;
+            case LegacyVpnInfo.STATE_DISCONNECTED:
+                return VpnProfileState.STATE_DISCONNECTED;
+            case LegacyVpnInfo.STATE_FAILED:
+                return VpnProfileState.STATE_FAILED;
+            default:
+                Log.wtf(TAG, "Unhandled state " + legacyState
+                        + ", treat it as STATE_DISCONNECTED");
+                return VpnProfileState.STATE_DISCONNECTED;
+        }
+    }
+
+    @GuardedBy("this")
+    @NonNull
+    private VpnProfileState makeVpnProfileStateLocked() {
+        return new VpnProfileState(getStateFromLegacyState(mLegacyState),
+                isIkev2VpnRunner() ? getSessionKeyLocked() : null, mAlwaysOn, mLockdown);
+    }
+
+    @NonNull
+    private VpnProfileState makeDisconnectedVpnProfileState() {
+        return new VpnProfileState(VpnProfileState.STATE_DISCONNECTED, null /* sessionKey */,
+                false /* alwaysOn */, false /* lockdown */);
+    }
+
+    /**
+     * Retrieve the VpnProfileState for the profile provisioned by the given package.
+     *
+     * @return the VpnProfileState with current information, or null if there was no profile
+     *         provisioned by the given package.
+     */
+    @Nullable
+    public synchronized VpnProfileState getProvisionedVpnProfileState(
+            @NonNull String packageName) {
+        requireNonNull(packageName, "No package name provided");
+        enforceNotRestrictedUser();
+        return isCurrentIkev2VpnLocked(packageName) ? makeVpnProfileStateLocked() : null;
+    }
+
+    /** Proxy to allow different testing setups */
+    // TODO: b/240492694 Remove VpnNetworkAgentWrapper and this method when
+    // NetworkAgent#sendLinkProperties can be un-finalized.
+    private static void doSendLinkProperties(
+            @NonNull NetworkAgent agent, @NonNull LinkProperties lp) {
+        if (agent instanceof VpnNetworkAgentWrapper) {
+            ((VpnNetworkAgentWrapper) agent).doSendLinkProperties(lp);
+        } else {
+            agent.sendLinkProperties(lp);
+        }
+    }
+
+    /** Proxy to allow different testing setups */
+    // TODO: b/240492694 Remove VpnNetworkAgentWrapper and this method when
+    // NetworkAgent#sendNetworkCapabilities can be un-finalized.
+    private static void doSendNetworkCapabilities(
+            @NonNull NetworkAgent agent, @NonNull NetworkCapabilities nc) {
+        if (agent instanceof VpnNetworkAgentWrapper) {
+            ((VpnNetworkAgentWrapper) agent).doSendNetworkCapabilities(nc);
+        } else {
+            agent.sendNetworkCapabilities(nc);
+        }
+    }
+
+    /** Proxy to allow different testing setups */
+    // TODO: b/240492694 Remove VpnNetworkAgentWrapper and this method when
+    // NetworkAgent#setUnderlyingNetworks can be un-finalized.
+    private static void doSetUnderlyingNetworks(
+            @NonNull NetworkAgent agent, @NonNull List<Network> networks) {
+        if (agent instanceof VpnNetworkAgentWrapper) {
+            ((VpnNetworkAgentWrapper) agent).doSetUnderlyingNetworks(networks);
+        } else {
+            agent.setUnderlyingNetworks(networks);
+        }
+    }
+
+    /**
+     * Proxy to allow testing
+     *
+     * @hide
+     */
+    // TODO: b/240492694 Remove VpnNetworkAgentWrapper when NetworkAgent's methods can be
+    // un-finalized.
+    @VisibleForTesting
+    public static class VpnNetworkAgentWrapper extends NetworkAgent {
+        /** Create an VpnNetworkAgentWrapper */
+        public VpnNetworkAgentWrapper(
+                @NonNull Context context,
+                @NonNull Looper looper,
+                @NonNull String logTag,
+                @NonNull NetworkCapabilities nc,
+                @NonNull LinkProperties lp,
+                @NonNull NetworkScore score,
+                @NonNull NetworkAgentConfig config,
+                @Nullable NetworkProvider provider) {
+            super(context, looper, logTag, nc, lp, score, config, provider);
+        }
+
+        /** Update the LinkProperties */
+        public void doSendLinkProperties(@NonNull LinkProperties lp) {
+            sendLinkProperties(lp);
+        }
+
+        /** Update the NetworkCapabilities */
+        public void doSendNetworkCapabilities(@NonNull NetworkCapabilities nc) {
+            sendNetworkCapabilities(nc);
+        }
+
+        /** Set the underlying networks */
+        public void doSetUnderlyingNetworks(@NonNull List<Network> networks) {
+            setUnderlyingNetworks(networks);
+        }
+
+        @Override
+        public void onNetworkUnwanted() {
+            // We are user controlled, not driven by NetworkRequest.
+        }
+    }
+
+    /**
+     * Proxy to allow testing
+     *
+     * @hide
+     */
+    @VisibleForTesting
+    public static class IkeSessionWrapper {
+        private final IkeSession mImpl;
+
+        /** Create an IkeSessionWrapper */
+        public IkeSessionWrapper(IkeSession session) {
+            mImpl = session;
+        }
+
+        /** Update the underlying network of the IKE Session */
+        public void setNetwork(@NonNull Network network) {
+            mImpl.setNetwork(network);
+        }
+
+        /** Forcibly terminate the IKE Session */
+        public void kill() {
+            mImpl.kill();
         }
     }
 
@@ -3369,20 +4355,21 @@ public class Vpn {
     @VisibleForTesting
     public static class Ikev2SessionCreator {
         /** Creates a IKE session */
-        public IkeSession createIkeSession(
+        public IkeSessionWrapper createIkeSession(
                 @NonNull Context context,
                 @NonNull IkeSessionParams ikeSessionParams,
                 @NonNull ChildSessionParams firstChildSessionParams,
                 @NonNull Executor userCbExecutor,
                 @NonNull IkeSessionCallback ikeSessionCallback,
                 @NonNull ChildSessionCallback firstChildSessionCallback) {
-            return new IkeSession(
-                    context,
-                    ikeSessionParams,
-                    firstChildSessionParams,
-                    userCbExecutor,
-                    ikeSessionCallback,
-                    firstChildSessionCallback);
+            return new IkeSessionWrapper(
+                    new IkeSession(
+                            context,
+                            ikeSessionParams,
+                            firstChildSessionParams,
+                            userCbExecutor,
+                            ikeSessionCallback,
+                            firstChildSessionCallback));
         }
     }
 

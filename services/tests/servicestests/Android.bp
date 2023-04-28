@@ -19,9 +19,6 @@ android_test {
         "src/**/*.java",
         "src/**/*.kt",
 
-        "aidl/com/android/servicestests/aidl/INetworkStateObserver.aidl",
-        "aidl/com/android/servicestests/aidl/ICmdReceiverService.aidl",
-
         "test-apps/JobTestApp/src/**/*.java",
 
         "test-apps/SuspendTestApp/src/**/*.java",
@@ -32,13 +29,14 @@ android_test {
         "services.appwidget",
         "services.autofill",
         "services.backup",
+        "services.companion",
         "services.core",
         "services.devicepolicy",
         "services.net",
         "services.people",
         "services.usage",
-        "services.uwb",
         "guava",
+        "guava-android-testlib",
         "androidx.test.core",
         "androidx.test.ext.truth",
         "androidx.test.runner",
@@ -53,21 +51,17 @@ android_test {
         "testng",
         "ub-uiautomator",
         "platformprotosnano",
+        "framework-protos",
         "hamcrest-library",
         "servicestests-utils",
-        "service-appsearch",
         "service-jobscheduler",
-        "service-permission.impl",
         // TODO: remove once Android migrates to JUnit 4.12,
         // which provides assertThrows
         "testng",
         "junit",
         "platform-compat-test-rules",
+        "ActivityContext",
     ],
-
-    aidl: {
-        local_include_dirs: ["aidl"],
-    },
 
     libs: [
         "android.hardware.power-V1-java",
@@ -86,12 +80,10 @@ android_test {
 
     // These are not normally accessible from apps so they must be explicitly included.
     jni_libs: [
-        "libbacktrace",
         "libbase",
         "libbinder",
         "libc++",
         "libcutils",
-        "libicing",
         "liblog",
         "liblzma",
         "libnativehelper",
@@ -114,16 +106,12 @@ android_test {
     ],
 
     java_resources: [
-        ":PackageParserTestApp1",
-        ":PackageParserTestApp2",
-        ":PackageParserTestApp3",
-        ":PackageParserTestApp4",
-        ":apex.test",
-        ":test.rebootless_apex_v1",
-        ":test.rebootless_apex_v2",
         ":com.android.apex.cts.shim.v1_prebuilt",
         ":com.android.apex.cts.shim.v2_different_certificate_prebuilt",
         ":com.android.apex.cts.shim.v2_unsigned_apk_container_prebuilt",
+        ":apex.test",
+        ":test.rebootless_apex_v1",
+        ":test.rebootless_apex_v2",
     ],
     resource_zips: [":FrameworksServicesTests_apks_as_resources"],
 }
@@ -132,9 +120,39 @@ java_library {
     name: "servicestests-core-utils",
     srcs: [
         "src/com/android/server/pm/PackageSettingBuilder.java",
+        "src/com/android/server/am/DeviceConfigSession.java",
+        "src/com/android/server/pm/parsing/TestPackageParser2.kt",
     ],
     static_libs: [
         "services.core",
+        "compatibility-device-util-axt",
+    ],
+}
+
+java_library {
+    name: "servicestests-dpm-utils",
+    srcs: [
+        "src/com/android/server/devicepolicy/DevicePolicyManagerServiceTestable.java",
+        "src/com/android/server/devicepolicy/DevicePolicyManagerTestable.java",
+        "src/com/android/server/devicepolicy/DpmMockContext.java",
+        "src/com/android/server/devicepolicy/DpmTestBase.java",
+        "src/com/android/server/devicepolicy/DpmTestUtils.java",
+        "src/com/android/server/devicepolicy/DummyDeviceAdmins.java",
+        "src/com/android/server/devicepolicy/MockSystemServices.java",
+        "src/com/android/server/devicepolicy/MockUtils.java",
+    ],
+    libs: [
+        "android.test.mock",
+        "android.test.base",
+        "mockito-target-minus-junit4",
+    ],
+    static_libs: [
+        "frameworks-base-testutils",
+        "androidx.test.core",
+        "androidx.test.ext.truth",
+        "androidx.test.rules",
+        "services.core",
+        "services.devicepolicy",
     ],
 }
 
@@ -144,7 +162,6 @@ java_library {
         "utils/**/*.java",
         "utils/**/*.kt",
         "utils-mockito/**/*.kt",
-        ":services.core-sources-deviceconfig-interface",
     ],
     static_libs: [
         "junit",
@@ -161,7 +178,6 @@ java_library {
         "utils/**/*.java",
         "utils/**/*.kt",
         "utils-mockito/**/*.kt",
-        ":services.core-sources-deviceconfig-interface",
     ],
     static_libs: [
         "junit",
@@ -183,18 +199,8 @@ filegroup {
 java_genrule {
     name: "FrameworksServicesTests_apks_as_resources",
     srcs: [
-        ":FrameworksCoreTests_install_complete_package_info",
-        ":FrameworksServicesTests_install_intent_filters",
         ":FrameworksServicesTests_install_split_base",
         ":FrameworksServicesTests_install_split_feature_a",
-        ":FrameworksServicesTests_install_uses_sdk_0",
-        ":FrameworksServicesTests_install_uses_sdk_q0",
-        ":FrameworksServicesTests_install_uses_sdk_q0_r0",
-        ":FrameworksServicesTests_install_uses_sdk_r_none",
-        ":FrameworksServicesTests_install_uses_sdk_r0",
-        ":FrameworksServicesTests_install_uses_sdk_r5",
-        ":FrameworksServicesTests_install_uses_sdk_r0_s0",
-        ":FrameworksServicesTests_install_uses_sdk_r0_s5",
     ],
     out: ["FrameworkServicesTests_apks_as_resources.res.zip"],
     tools: ["soong_zip"],

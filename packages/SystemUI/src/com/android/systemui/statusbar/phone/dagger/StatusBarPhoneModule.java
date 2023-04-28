@@ -16,24 +16,6 @@
 
 package com.android.systemui.statusbar.phone.dagger;
 
-import static com.android.systemui.Dependency.TIME_TICK_HANDLER_NAME;
-
-import android.app.WallpaperManager;
-import android.content.Context;
-import android.os.Handler;
-import android.os.PowerManager;
-import android.util.DisplayMetrics;
-
-import com.android.internal.logging.MetricsLogger;
-import com.android.keyguard.KeyguardUpdateMonitor;
-import com.android.keyguard.ViewMediatorCallback;
-import com.android.systemui.InitController;
-import com.android.systemui.accessibility.floatingmenu.AccessibilityFloatingMenuController;
-import com.android.systemui.animation.ActivityLaunchAnimator;
-import com.android.systemui.assist.AssistManager;
-import com.android.systemui.broadcast.BroadcastDispatcher;
-import com.android.systemui.classifier.FalsingCollector;
-import com.android.systemui.colorextraction.SysuiColorExtractor;
 import com.android.systemui.dagger.SysUISingleton;
 import com.android.systemui.dagger.qualifiers.Main;
 import com.android.systemui.dagger.qualifiers.UiBackground;
@@ -122,24 +104,18 @@ import com.android.wm.shell.bubbles.Bubbles;
 import com.android.wm.shell.legacysplitscreen.LegacySplitScreen;
 import com.android.wm.shell.startingsurface.StartingSurface;
 
-import java.util.Optional;
-import java.util.concurrent.Executor;
-
-import javax.inject.Named;
-
-import dagger.Lazy;
+import dagger.Binds;
 import dagger.Module;
-import dagger.Provides;
 
 /**
- * Dagger Module providing {@link StatusBar}.
+ * Dagger Module providing {@link CentralSurfacesImpl}.
  */
-@Module(includes = {StatusBarPhoneDependenciesModule.class})
+@Module
 public interface StatusBarPhoneModule {
     /**
-     * Provides our instance of StatusBar which is considered optional.
+     * Provides our instance of CentralSurfaces which is considered optional.
      */
-    @Provides
+    @Binds
     @SysUISingleton
     static StatusBar provideStatusBar(
             Context context,

@@ -22,9 +22,13 @@ import static android.app.NotificationManager.IMPORTANCE_HIGH;
 
 import static com.android.systemui.statusbar.NotificationEntryHelper.modifyRanking;
 
+import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertTrue;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
 
 import android.annotation.Nullable;
 import android.app.ActivityManager;
@@ -36,6 +40,7 @@ import android.content.Context;
 import android.content.Intent;
 import android.content.pm.LauncherApps;
 import android.graphics.drawable.Icon;
+import android.os.Handler;
 import android.os.UserHandle;
 import android.service.notification.StatusBarNotification;
 import android.testing.TestableLooper;
@@ -43,38 +48,47 @@ import android.text.TextUtils;
 import android.view.LayoutInflater;
 import android.widget.RemoteViews;
 
+import com.android.internal.logging.MetricsLogger;
+import com.android.internal.logging.UiEventLogger;
 import com.android.systemui.TestableDependency;
 import com.android.systemui.classifier.FalsingCollectorFake;
 import com.android.systemui.classifier.FalsingManagerFake;
-import com.android.systemui.dump.DumpManager;
-import com.android.systemui.media.MediaFeatureFlag;
+import com.android.systemui.media.controls.util.MediaFeatureFlag;
 import com.android.systemui.media.dialog.MediaOutputDialogFactory;
 import com.android.systemui.plugins.statusbar.StatusBarStateController;
+import com.android.systemui.shade.ShadeExpansionStateManager;
 import com.android.systemui.statusbar.NotificationMediaManager;
 import com.android.systemui.statusbar.NotificationRemoteInputManager;
 import com.android.systemui.statusbar.NotificationShadeWindowController;
+import com.android.systemui.statusbar.SmartReplyController;
 import com.android.systemui.statusbar.notification.ConversationNotificationProcessor;
+import com.android.systemui.statusbar.notification.SourceType;
 import com.android.systemui.statusbar.notification.collection.NotificationEntry;
 import com.android.systemui.statusbar.notification.collection.NotificationEntryBuilder;
-import com.android.systemui.statusbar.notification.collection.legacy.NotificationGroupManagerLegacy;
 import com.android.systemui.statusbar.notification.collection.notifcollection.CommonNotifCollection;
 import com.android.systemui.statusbar.notification.collection.notifcollection.NotifCollectionListener;
+import com.android.systemui.statusbar.notification.collection.provider.VisualStabilityProvider;
+import com.android.systemui.statusbar.notification.collection.render.GroupExpansionManager;
+import com.android.systemui.statusbar.notification.collection.render.GroupMembershipManager;
 import com.android.systemui.statusbar.notification.icon.IconBuilder;
 import com.android.systemui.statusbar.notification.icon.IconManager;
 import com.android.systemui.statusbar.notification.people.PeopleNotificationIdentifier;
-import com.android.systemui.statusbar.notification.row.ExpandableNotificationRow.ExpansionLogger;
+import com.android.systemui.statusbar.notification.row.ExpandableNotificationRow.ExpandableNotificationRowLogger;
 import com.android.systemui.statusbar.notification.row.ExpandableNotificationRow.OnExpandClickListener;
 import com.android.systemui.statusbar.notification.row.NotificationRowContentBinder.InflationFlag;
 import com.android.systemui.statusbar.phone.ConfigurationControllerImpl;
 import com.android.systemui.statusbar.phone.HeadsUpManagerPhone;
 import com.android.systemui.statusbar.phone.KeyguardBypassController;
+import com.android.systemui.statusbar.policy.AccessibilityManagerWrapper;
+import com.android.systemui.statusbar.policy.HeadsUpManagerLogger;
 import com.android.systemui.statusbar.policy.InflatedSmartReplyState;
 import com.android.systemui.statusbar.policy.InflatedSmartReplyViewHolder;
+import com.android.systemui.statusbar.policy.SmartReplyConstants;
 import com.android.systemui.statusbar.policy.SmartReplyStateInflater;
+import com.android.systemui.statusbar.policy.dagger.RemoteInputViewSubcomponent;
 import com.android.systemui.tests.R;
 import com.android.systemui.wmshell.BubblesManager;
 import com.android.systemui.wmshell.BubblesTestActivity;
-import com.android.wm.shell.bubbles.Bubbles;
 
 import org.mockito.ArgumentCaptor;
 
@@ -102,8 +116,9 @@ public class NotificationTestHelper {
     private final Context mContext;
     private final TestableLooper mTestLooper;
     private int mId;
-    private final NotificationGroupManagerLegacy mGroupMembershipManager;
-    private final NotificationGroupManagerLegacy mGroupExpansionManager;
+    private final ExpandableNotificationRowLogger mMockLogger;
+    private final GroupMembershipManager mGroupMembershipManager;
+    private final GroupExpansionManager mGroupExpansionManager;
     private ExpandableNotificationRow mRow;
     private HeadsUpManagerPhone mHeadsUpManager;
     private final NotifBindPipeline mBindPipeline;
@@ -112,6 +127,9 @@ public class NotificationTestHelper {
     private final IconManager mIconManager;
     private StatusBarStateController mStatusBarStateController;
     private final PeopleNotificationIdentifier mPeopleNotificationIdentifier;
+    public final OnUserInteractionCallback mOnUserInteractionCallback;
+    public final Runnable mFutureDismissalRunnable;
+    private @InflationFlag int mDefaultInflationFlags;
 
     public NotificationTestHelper(
             Context context,
@@ -122,17 +140,25 @@ public class NotificationTestHelper {
         dependency.injectMockDependency(NotificationMediaManager.class);
         dependency.injectMockDependency(NotificationShadeWindowController.class);
         dependency.injectMockDependency(MediaOutputDialogFactory.class);
+        mMockLogger = mock(ExpandableNotificationRowLogger.class);
         mStatusBarStateController = mock(StatusBarStateController.class);
-        mGroupMembershipManager = new NotificationGroupManagerLegacy(
+        mGroupMembershipManager = mock(GroupMembershipManager.class);
+        mGroupExpansionManager = mock(GroupExpansionManager.class);
+        mHeadsUpManager = new HeadsUpManagerPhone(
+                mContext,
+                mock(HeadsUpManagerLogger.class),
                 mStatusBarStateController,
-                () -> mock(PeopleNotificationIdentifier.class),
-                Optional.of((mock(Bubbles.class))),
-                mock(DumpManager.class));
-        mGroupExpansionManager = mGroupMembershipManager;
-        mHeadsUpManager = new HeadsUpManagerPhone(mContext, mStatusBarStateController,
-                mock(KeyguardBypassController.class), mock(NotificationGroupManagerLegacy.class),
-                mock(ConfigurationControllerImpl.class));
-        mGroupMembershipManager.setHeadsUpManager(mHeadsUpManager);
+                mock(KeyguardBypassController.class),
+                mock(GroupMembershipManager.class),
+                mock(VisualStabilityProvider.class),
+                mock(ConfigurationControllerImpl.class),
+                new Handler(mTestLooper.getLooper()),
+                mock(AccessibilityManagerWrapper.class),
+                mock(UiEventLogger.class),
+                mock(ShadeExpansionStateManager.class)
+        );
+        mHeadsUpManager.mHandler.removeCallbacksAndMessages(null);
+        mHeadsUpManager.mHandler = new Handler(mTestLooper.getLooper());
         mIconManager = new IconManager(
                 mock(CommonNotifCollection.class),
                 mock(LauncherApps.class),
@@ -163,6 +189,36 @@ public class NotificationTestHelper {
         verify(collection).addCollectionListener(collectionListenerCaptor.capture());
         mBindPipelineEntryListener = collectionListenerCaptor.getValue();
         mPeopleNotificationIdentifier = mock(PeopleNotificationIdentifier.class);
+        mOnUserInteractionCallback = mock(OnUserInteractionCallback.class);
+        mFutureDismissalRunnable = mock(Runnable.class);
+        when(mOnUserInteractionCallback.registerFutureDismissal(any(), anyInt()))
+                .thenReturn(mFutureDismissalRunnable);
+    }
+
+    public void setDefaultInflationFlags(@InflationFlag int defaultInflationFlags) {
+        mDefaultInflationFlags = defaultInflationFlags;
+    }
+
+    public ExpandableNotificationRowLogger getMockLogger() {
+        return mMockLogger;
+    }
+
+    /**
+     * Creates a generic row with rounded border.
+     *
+     * @return a generic row with the set roundness.
+     * @throws Exception
+     */
+    public ExpandableNotificationRow createRowWithRoundness(
+            float topRoundness,
+            float bottomRoundness,
+            SourceType sourceType
+    ) throws Exception {
+        ExpandableNotificationRow row = createRow();
+        row.requestRoundness(topRoundness, bottomRoundness, sourceType, /*animate = */ false);
+        assertEquals(topRoundness, row.getTopRoundness(), /* delta = */ 0f);
+        assertEquals(bottomRoundness, row.getBottomRoundness(), /* delta = */ 0f);
+        return row;
     }
 
     /**
@@ -196,7 +252,7 @@ public class NotificationTestHelper {
      * @throws Exception
      */
     public ExpandableNotificationRow createRow(Notification notification) throws Exception {
-        return generateRow(notification, PKG, UID, USER_HANDLE, 0 /* extraInflationFlags */);
+        return generateRow(notification, PKG, UID, USER_HANDLE, mDefaultInflationFlags);
     }
 
     /**
@@ -244,10 +300,11 @@ public class NotificationTestHelper {
     public ExpandableNotificationRow createBubble()
             throws Exception {
         Notification n = createNotification(false /* isGroupSummary */,
-                null /* groupKey */, makeBubbleMetadata(null));
+                null /* groupKey */,
+                makeBubbleMetadata(null /* deleteIntent */, false /* autoExpand */));
         n.flags |= FLAG_BUBBLE;
         ExpandableNotificationRow row = generateRow(n, PKG, UID, USER_HANDLE,
-                0 /* extraInflationFlags */, IMPORTANCE_HIGH);
+                mDefaultInflationFlags, IMPORTANCE_HIGH);
         modifyRanking(row.getEntry())
                 .setCanBubble(true)
                 .build();
@@ -263,7 +320,7 @@ public class NotificationTestHelper {
                 null /* groupKey */, makeShortcutBubbleMetadata(shortcutId));
         n.flags |= FLAG_BUBBLE;
         ExpandableNotificationRow row = generateRow(n, PKG, UID, USER_HANDLE,
-                0 /* extraInflationFlags */, IMPORTANCE_HIGH);
+                mDefaultInflationFlags, IMPORTANCE_HIGH);
         modifyRanking(row.getEntry())
                 .setCanBubble(true)
                 .build();
@@ -277,10 +334,11 @@ public class NotificationTestHelper {
     public ExpandableNotificationRow createBubbleInGroup()
             throws Exception {
         Notification n = createNotification(false /* isGroupSummary */,
-                GROUP_KEY /* groupKey */, makeBubbleMetadata(null));
+                GROUP_KEY /* groupKey */,
+                makeBubbleMetadata(null /* deleteIntent */, false /* autoExpand */));
         n.flags |= FLAG_BUBBLE;
         ExpandableNotificationRow row = generateRow(n, PKG, UID, USER_HANDLE,
-                0 /* extraInflationFlags */, IMPORTANCE_HIGH);
+                mDefaultInflationFlags, IMPORTANCE_HIGH);
         modifyRanking(row.getEntry())
                 .setCanBubble(true)
                 .build();
@@ -293,7 +351,7 @@ public class NotificationTestHelper {
      * @param deleteIntent the intent to assign to {@link BubbleMetadata#deleteIntent}
      */
     public NotificationEntry createBubble(@Nullable PendingIntent deleteIntent) {
-        return createBubble(makeBubbleMetadata(deleteIntent), USER_HANDLE);
+        return createBubble(makeBubbleMetadata(deleteIntent, false /* autoExpand */), USER_HANDLE);
     }
 
     /**
@@ -302,7 +360,16 @@ public class NotificationTestHelper {
      * @param handle the user to associate with this bubble.
      */
     public NotificationEntry createBubble(UserHandle handle) {
-        return createBubble(makeBubbleMetadata(null), handle);
+        return createBubble(makeBubbleMetadata(null /* deleteIntent */, false /* autoExpand */),
+                handle);
+    }
+
+    /**
+     * Returns an {@link NotificationEntry} that should be shown as a auto-expanded bubble.
+     */
+    public NotificationEntry createAutoExpandedBubble() {
+        return createBubble(makeBubbleMetadata(null /* deleteIntent */, true /* autoExpand */),
+                USER_HANDLE);
     }
 
     /**
@@ -359,7 +426,7 @@ public class NotificationTestHelper {
             @Nullable String groupKey)
             throws Exception {
         Notification notif = createNotification(isGroupSummary, groupKey);
-        return generateRow(notif, pkg, uid, userHandle, 0 /* inflationFlags */);
+        return generateRow(notif, pkg, uid, userHandle, mDefaultInflationFlags);
     }
 
     /**
@@ -473,9 +540,10 @@ public class NotificationTestHelper {
 
         row.initialize(
                 entry,
+                mock(RemoteInputViewSubcomponent.Factory.class),
                 APP_NAME,
                 entry.getKey(),
-                mock(ExpansionLogger.class),
+                mMockLogger,
                 mock(KeyguardBypassController.class),
                 mGroupMembershipManager,
                 mGroupExpansionManager,
@@ -488,18 +556,17 @@ public class NotificationTestHelper {
                 new FalsingCollectorFake(),
                 mStatusBarStateController,
                 mPeopleNotificationIdentifier,
-                mock(OnUserInteractionCallback.class),
+                mOnUserInteractionCallback,
                 Optional.of(mock(BubblesManager.class)),
-                mock(NotificationGutsManager.class));
+                mock(NotificationGutsManager.class),
+                mock(MetricsLogger.class),
+                mock(SmartReplyConstants.class),
+                mock(SmartReplyController.class));
 
         row.setAboveShelfChangedListener(aboveShelf -> { });
         mBindStage.getStageParams(entry).requireContentViews(extraInflationFlags);
         inflateAndWait(entry);
 
-        // This would be done as part of onAsyncInflationFinished, but we skip large amounts of
-        // the callback chain, so we need to make up for not adding it to the group manager
-        // here.
-        mGroupMembershipManager.onEntryAdded(entry);
         return row;
     }
 
@@ -510,7 +577,7 @@ public class NotificationTestHelper {
         assertTrue(countDownLatch.await(500, TimeUnit.MILLISECONDS));
     }
 
-    private BubbleMetadata makeBubbleMetadata(PendingIntent deleteIntent) {
+    private BubbleMetadata makeBubbleMetadata(PendingIntent deleteIntent, boolean autoExpand) {
         Intent target = new Intent(mContext, BubblesTestActivity.class);
         PendingIntent bubbleIntent = PendingIntent.getActivity(mContext, 0, target,
                 PendingIntent.FLAG_MUTABLE);
@@ -519,6 +586,7 @@ public class NotificationTestHelper {
                         Icon.createWithResource(mContext, R.drawable.android))
                 .setDeleteIntent(deleteIntent)
                 .setDesiredHeight(314)
+                .setAutoExpandBubble(autoExpand)
                 .build();
     }
 

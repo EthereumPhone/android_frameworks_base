@@ -19,6 +19,8 @@ package com.android.systemui.volume.dagger;
 import android.content.Context;
 import android.media.AudioManager;
 
+import com.android.internal.jank.InteractionJankMonitor;
+import com.android.systemui.dump.DumpManager;
 import com.android.systemui.media.dialog.MediaOutputDialogFactory;
 import com.android.systemui.plugins.ActivityStarter;
 import com.android.systemui.plugins.VolumeDialog;
@@ -30,6 +32,7 @@ import com.android.systemui.tuner.TunerService;
 import com.android.systemui.volume.VolumeComponent;
 import com.android.systemui.volume.VolumeDialogComponent;
 import com.android.systemui.volume.VolumeDialogImpl;
+import com.android.systemui.volume.VolumePanelFactory;
 
 import dagger.Binds;
 import dagger.Module;

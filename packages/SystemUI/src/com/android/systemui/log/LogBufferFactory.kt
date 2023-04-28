@@ -18,6 +18,10 @@ package com.android.systemui.log
 
 import com.android.systemui.dagger.SysUISingleton
 import com.android.systemui.dump.DumpManager
+import com.android.systemui.log.LogBufferHelper.Companion.adjustMaxSize
+import com.android.systemui.plugins.log.LogBuffer
+import com.android.systemui.plugins.log.LogcatEchoTracker
+
 import javax.inject.Inject
 
 @SysUISingleton
@@ -26,8 +30,12 @@ class LogBufferFactory @Inject constructor(
     private val logcatEchoTracker: LogcatEchoTracker
 ) {
     @JvmOverloads
-    fun create(name: String, maxPoolSize: Int, flexSize: Int = 10): LogBuffer {
-        val buffer = LogBuffer(name, maxPoolSize, flexSize, logcatEchoTracker)
+    fun create(
+        name: String,
+        maxSize: Int,
+        systrace: Boolean = true
+    ): LogBuffer {
+        val buffer = LogBuffer(name, adjustMaxSize(maxSize), logcatEchoTracker, systrace)
         dumpManager.registerBuffer(name, buffer)
         return buffer
     }

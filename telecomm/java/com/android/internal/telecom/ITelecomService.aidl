@@ -22,6 +22,7 @@ import android.telecom.TelecomAnalytics;
 import android.telecom.PhoneAccountHandle;
 import android.net.Uri;
 import android.os.Bundle;
+import android.os.UserHandle;
 import android.telecom.PhoneAccount;
 import android.content.pm.ParceledListSlice;
 
@@ -64,6 +65,12 @@ interface ITelecomService {
      * @see TelecomServiceImpl#getSelfManagedPhoneAccounts
      */
     ParceledListSlice<PhoneAccountHandle> getSelfManagedPhoneAccounts(String callingPackage,
+            String callingFeatureId);
+
+    /**
+     * @see TelecomServiceImpl#getOwnSelfManagedPhoneAccounts
+     */
+    ParceledListSlice<PhoneAccountHandle> getOwnSelfManagedPhoneAccounts(String callingPackage,
             String callingFeatureId);
 
     /**
@@ -307,12 +314,14 @@ interface ITelecomService {
     /**
      * @see TelecomServiceImpl#isIncomingCallPermitted
      */
-    boolean isIncomingCallPermitted(in PhoneAccountHandle phoneAccountHandle);
+    boolean isIncomingCallPermitted(in PhoneAccountHandle phoneAccountHandle,
+            String callingPackage);
 
     /**
      * @see TelecomServiceImpl#isOutgoingCallPermitted
      */
-    boolean isOutgoingCallPermitted(in PhoneAccountHandle phoneAccountHandle);
+    boolean isOutgoingCallPermitted(in PhoneAccountHandle phoneAccountHandle,
+            String callingPackage);
 
     /**
      * @see TelecomServiceImpl#waitOnHandler
@@ -341,9 +350,16 @@ interface ITelecomService {
 
     void cleanupStuckCalls();
 
+    int cleanupOrphanPhoneAccounts();
+
     void resetCarMode();
 
     void setTestDefaultCallRedirectionApp(String packageName);
+
+    /**
+     * @see TelecomServiceImpl#requestLogMark
+     */
+    void requestLogMark(in String message);
 
     void setTestPhoneAcctSuggestionComponent(String flattenedComponentName);
 
@@ -365,4 +381,10 @@ interface ITelecomService {
      * @see TelecomServiceImpl#setTestCallDiagnosticService
      */
     void setTestCallDiagnosticService(in String packageName);
+
+    /**
+     * @see TelecomServiceImpl#isInSelfManagedCall
+     */
+    boolean isInSelfManagedCall(String packageName, in UserHandle userHandle,
+        String callingPackage);
 }

@@ -64,12 +64,13 @@ class SplashScreenExceptionList {
                 mOnPropertiesChangedListener);
     }
 
-    private void updateDeviceConfig(String values) {
+    @VisibleForTesting
+    void updateDeviceConfig(String values) {
         parseDeviceConfigPackageList(values);
     }
 
     /**
-     * Returns true if the packageName is in the list and the target sdk is before S.
+     * Returns true if the packageName is in the list and the target sdk is before or including T.
      *
      * @param packageName  The package name of the application to check
      * @param targetSdk    The target sdk of the application

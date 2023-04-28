@@ -18,27 +18,19 @@
  */
 -->
 <resources xmlns:xliff="urn:oasis:names:tc:xliff:document:1.2">
-    <string name="accessibility_dpad_left">Žymeklis kairėje</string>
-    <string name="accessibility_dpad_right">Žymeklis dešinėje</string>
     <string name="quick_settings_ambient_display_label">Ambient display</string>
     <string name="accessibility_quick_settings_ambient_display_off">Ambient display išjungta.</string>
     <string name="accessibility_quick_settings_ambient_display_on">Ambient display įjungta.</string>
-    <string name="accessibility_quick_settings_ambient_display_changed_off">Ambient display išjungta.</string>
-    <string name="accessibility_quick_settings_ambient_display_changed_on">Ambient display įjungta.</string>
     <string name="quick_settings_heads_up_label">Iššokantys pranešimai</string>
     <string name="accessibility_quick_settings_heads_up_off">Iššokantys pranešimai išjungti.</string>
     <string name="accessibility_quick_settings_heads_up_on">Iššokantys pranešimai įjungti.</string>
-    <string name="accessibility_quick_settings_heads_up_changed_off">Iššokantys pranešimai išjungti.</string>
-    <string name="accessibility_quick_settings_heads_up_changed_on">Iššokantys pranešimai įjungti.</string>
     <string name="quick_settings_sync_label">Sinchronizavimas</string>
     <string name="accessibility_quick_settings_sync_off">Sinchronizavimas išjungtas.</string>
     <string name="accessibility_quick_settings_sync_on">Sinchronizavimas įjungtas.</string>
-    <string name="accessibility_quick_settings_sync_changed_off">Sinchronizavimas išjungtas.</string>
-    <string name="accessibility_quick_settings_sync_changed_on">Sinchronizavimas įjungtas.</string>
     <string name="quick_settings_profiles_label">Sistemos profiliai</string>
     <string name="accessibility_quick_settings_profiles_off">Profiliai išjungti.</string>
     <string name="accessibility_quick_settings_profiles">Profilis: <xliff:g id="profile" example="Default">%s </xliff:g>.</string>
-    <string name="accessibility_quick_settings_profiles_changed_off">Profiliai išjungti.</string>
-    <string name="accessibility_quick_settings_profiles_changed">Profilis pakeistas į <xliff:g id="profile" example="Default">%s </xliff:g>.</string>
     <string name="quick_settings_usb_tether_label">USB susiejimas</string>
+    <string name="accessibility_dpad_left">Žymeklis kairėje</string>
+    <string name="accessibility_dpad_right">Žymeklis dešinėje</string>
 </resources>

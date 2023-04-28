@@ -18,6 +18,7 @@ package com.android.server;
 import android.annotation.NonNull;
 import android.app.ActivityManager;
 import android.app.ActivityManagerInternal;
+import android.app.ActivityManagerInternal.AppBackgroundRestrictionListener;
 import android.app.AppOpsManager;
 import android.app.AppOpsManager.PackageOps;
 import android.app.IActivityManager;
@@ -60,8 +61,10 @@ import com.android.server.usage.AppStandbyInternal.AppIdleStateChangeListener;
 
 import java.io.PrintWriter;
 import java.util.Arrays;
+import java.util.Collections;
 import java.util.List;
 import java.util.Objects;
+import java.util.Set;
 
 /**
  * Class to keep track of the information related to "force app standby", which includes:
@@ -104,6 +107,12 @@ public class AppStateTrackerImpl implements AppStateTracker {
     /** UIDs that are active. */
     @GuardedBy("mLock")
     final SparseBooleanArray mActiveUids = new SparseBooleanArray();
+
+    /**
+     * System exemption list in the device idle controller.
+     */
+    @GuardedBy("mLock")
+    private int[] mPowerExemptSystemAppIds = new int[0];
 
     /**
      * System except-idle + user exemption list in the device idle controller.
@@ -160,14 +169,32 @@ public class AppStateTrackerImpl implements AppStateTracker {
     @GuardedBy("mLock")
     boolean mForcedAppStandbyEnabled;
 
+    /**
+     * A lock-free set of (uid, packageName) pairs in background restricted mode.
+     *
+     * <p>
+     * It's bascially shadowing the {@link #mRunAnyRestrictedPackages} together with
+     * the {@link #mForcedAppStandbyEnabled} - mutations on them would result in copy-on-write.
+     * </p>
+     */
+    volatile Set<Pair<Integer, String>> mBackgroundRestrictedUidPackages = Collections.emptySet();
+
     @Override
-    public void addServiceStateListener(@NonNull ServiceStateListener listener) {
+    public void addBackgroundRestrictedAppListener(
+            @NonNull BackgroundRestrictedAppListener listener) {
         addListener(new Listener() {
             @Override
-            public void stopForegroundServicesForUidPackage(int uid, String packageName) {
-                listener.stopForegroundServicesForUidPackage(uid, packageName);
+            public void updateBackgroundRestrictedForUidPackage(int uid, String packageName,
+                    boolean restricted) {
+                listener.updateBackgroundRestrictedForUidPackage(uid, packageName, restricted);
             }
         });
+    }
+
+    @Override
+    public boolean isAppBackgroundRestricted(int uid, @NonNull String packageName) {
+        final Set<Pair<Integer, String>> bgRestrictedUidPkgs = mBackgroundRestrictedUidPackages;
+        return bgRestrictedUidPkgs.contains(Pair.create(uid, packageName));
     }
 
     interface Stats {
@@ -233,6 +260,7 @@ public class AppStateTrackerImpl implements AppStateTracker {
                         return;
                     }
                     mForcedAppStandbyEnabled = enabled;
+                    updateBackgroundRestrictedUidPackagesLocked();
                     if (DEBUG) {
                         Slog.d(TAG, "Forced app standby feature flag changed: "
                                 + mForcedAppStandbyEnabled);
@@ -259,6 +287,14 @@ public class AppStateTrackerImpl implements AppStateTracker {
         }
     }
 
+    private final AppBackgroundRestrictionListener mAppBackgroundRestrictionListener =
+            new AppBackgroundRestrictionListener() {
+        @Override
+        public void onAutoRestrictedBucketFeatureFlagChanged(boolean autoRestrictedBucket) {
+            mHandler.notifyAutoRestrictedBucketFeatureFlagChanged(autoRestrictedBucket);
+        }
+    };
+
     /**
      * Listener for any state changes that affect any app's eligibility to run.
      */
@@ -277,7 +313,11 @@ public class AppStateTrackerImpl implements AppStateTracker {
             if (!sender.isRunAnyInBackgroundAppOpsAllowed(uid, packageName)) {
                 Slog.v(TAG, "Package " + packageName + "/" + uid
                         + " toggled into fg service restriction");
-                stopForegroundServicesForUidPackage(uid, packageName);
+                updateBackgroundRestrictedForUidPackage(uid, packageName, true);
+            } else {
+                Slog.v(TAG, "Package " + packageName + "/" + uid
+                        + " toggled out of fg service restriction");
+                updateBackgroundRestrictedForUidPackage(uid, packageName, false);
             }
         }
 
@@ -345,6 +385,18 @@ public class AppStateTrackerImpl implements AppStateTracker {
         }
 
         /**
+         * Called when toggling the feature flag of moving to restricted standby bucket
+         * automatically on background-restricted.
+         */
+        private void onAutoRestrictedBucketFeatureFlagChanged(AppStateTrackerImpl sender,
+                boolean autoRestrictedBucket) {
+            updateAllJobs();
+            if (autoRestrictedBucket) {
+                unblockAllUnrestrictedAlarms();
+            }
+        }
+
+        /**
          * Called when the job restrictions for multiple UIDs might have changed, so the job
          * scheduler should re-evaluate all restrictions for all jobs.
          */
@@ -366,10 +418,10 @@ public class AppStateTrackerImpl implements AppStateTracker {
         }
 
         /**
-         * Called when an app goes into forced app standby and its foreground
-         * services need to be removed from that state.
+         * Called when an app goes in/out of background restricted mode.
          */
-        public void stopForegroundServicesForUidPackage(int uid, String packageName) {
+        public void updateBackgroundRestrictedForUidPackage(int uid, String packageName,
+                boolean restricted) {
         }
 
         /**
@@ -438,9 +490,12 @@ public class AppStateTrackerImpl implements AppStateTracker {
                         final int uid = intent.getIntExtra(Intent.EXTRA_UID, -1);
                         // No need to notify for state change as all the alarms and jobs should be
                         // removed too.
-                        mExemptedBucketPackages.remove(userId, pkgName);
-                        mRunAnyRestrictedPackages.remove(Pair.create(uid, pkgName));
-                        mActiveUids.delete(uid);
+                        synchronized (mLock) {
+                            mExemptedBucketPackages.remove(userId, pkgName);
+                            mRunAnyRestrictedPackages.remove(Pair.create(uid, pkgName));
+                            updateBackgroundRestrictedUidPackagesLocked();
+                            mActiveUids.delete(uid);
+                        }
                     }
                     break;
             }
@@ -471,6 +526,8 @@ public class AppStateTrackerImpl implements AppStateTracker {
                     mFlagsObserver.isForcedAppStandbyForSmallBatteryEnabled();
             mStandbyTracker = new StandbyTracker();
             mAppStandbyInternal.addListener(mStandbyTracker);
+            mActivityManagerInternal.addAppBackgroundRestrictionListener(
+                    mAppBackgroundRestrictionListener);
 
             try {
                 mIActivityManager.registerUidObserver(new UidObserver(),
@@ -580,6 +637,24 @@ public class AppStateTrackerImpl implements AppStateTracker {
                 }
             }
         }
+        updateBackgroundRestrictedUidPackagesLocked();
+    }
+
+    /**
+     * Update the {@link #mBackgroundRestrictedUidPackages} upon mutations on
+     * {@link #mRunAnyRestrictedPackages} or {@link #mForcedAppStandbyEnabled}.
+     */
+    @GuardedBy("mLock")
+    private void updateBackgroundRestrictedUidPackagesLocked() {
+        if (!mForcedAppStandbyEnabled) {
+            mBackgroundRestrictedUidPackages = Collections.emptySet();
+            return;
+        }
+        Set<Pair<Integer, String>> fasUidPkgs = new ArraySet<>();
+        for (int i = 0, size = mRunAnyRestrictedPackages.size(); i < size; i++) {
+            fasUidPkgs.add(mRunAnyRestrictedPackages.valueAt(i));
+        }
+        mBackgroundRestrictedUidPackages = Collections.unmodifiableSet(fasUidPkgs);
     }
 
     private void updateForceAllAppStandbyState() {
@@ -645,6 +720,7 @@ public class AppStateTrackerImpl implements AppStateTracker {
         } else {
             mRunAnyRestrictedPackages.removeAt(index);
         }
+        updateBackgroundRestrictedUidPackagesLocked();
         return true;
     }
 
@@ -696,6 +772,10 @@ public class AppStateTrackerImpl implements AppStateTracker {
 
         @Override
         public void onUidCachedChanged(int uid, boolean cached) {
+        }
+
+        @Override
+        public void onUidProcAdjChanged(int uid) {
         }
     }
 
@@ -755,6 +835,7 @@ public class AppStateTrackerImpl implements AppStateTracker {
         private static final int MSG_USER_REMOVED = 8;
         private static final int MSG_FORCE_APP_STANDBY_FEATURE_FLAG_CHANGED = 9;
         private static final int MSG_EXEMPTED_BUCKET_CHANGED = 10;
+        private static final int MSG_AUTO_RESTRICTED_BUCKET_FEATURE_FLAG_CHANGED = 11;
 
         private static final int MSG_ON_UID_ACTIVE = 12;
         private static final int MSG_ON_UID_GONE = 13;
@@ -800,6 +881,12 @@ public class AppStateTrackerImpl implements AppStateTracker {
         public void notifyExemptedBucketChanged() {
             removeMessages(MSG_EXEMPTED_BUCKET_CHANGED);
             obtainMessage(MSG_EXEMPTED_BUCKET_CHANGED).sendToTarget();
+        }
+
+        public void notifyAutoRestrictedBucketFeatureFlagChanged(boolean autoRestrictedBucket) {
+            removeMessages(MSG_AUTO_RESTRICTED_BUCKET_FEATURE_FLAG_CHANGED);
+            obtainMessage(MSG_AUTO_RESTRICTED_BUCKET_FEATURE_FLAG_CHANGED,
+                    autoRestrictedBucket ? 1 : 0, 0).sendToTarget();
         }
 
         public void doUserRemoved(int userId) {
@@ -905,6 +992,13 @@ public class AppStateTrackerImpl implements AppStateTracker {
                     handleUserRemoved(msg.arg1);
                     return;
 
+                case MSG_AUTO_RESTRICTED_BUCKET_FEATURE_FLAG_CHANGED:
+                    final boolean autoRestrictedBucket = msg.arg1 == 1;
+                    for (Listener l : cloneListeners()) {
+                        l.onAutoRestrictedBucketFeatureFlagChanged(sender, autoRestrictedBucket);
+                    }
+                    return;
+
                 case MSG_ON_UID_ACTIVE:
                     handleUidActive(msg.arg1);
                     return;
@@ -966,6 +1060,7 @@ public class AppStateTrackerImpl implements AppStateTracker {
                     mRunAnyRestrictedPackages.removeAt(i);
                 }
             }
+            updateBackgroundRestrictedUidPackagesLocked();
             cleanUpArrayForUser(mActiveUids, removedUserId);
             mExemptedBucketPackages.remove(removedUserId);
         }
@@ -986,6 +1081,7 @@ public class AppStateTrackerImpl implements AppStateTracker {
      * Called by device idle controller to update the power save exemption lists.
      */
     public void setPowerSaveExemptionListAppIds(
+            int[] powerSaveExemptionListSystemAppIdArray,
             int[] powerSaveExemptionListExceptIdleAppIdArray,
             int[] powerSaveExemptionListUserAppIdArray,
             int[] tempExemptionListAppIdArray) {
@@ -993,6 +1089,7 @@ public class AppStateTrackerImpl implements AppStateTracker {
             final int[] previousExemptionList = mPowerExemptAllAppIds;
             final int[] previousTempExemptionList = mTempExemptAppIds;
 
+            mPowerExemptSystemAppIds = powerSaveExemptionListSystemAppIdArray;
             mPowerExemptAllAppIds = powerSaveExemptionListExceptIdleAppIdArray;
             mTempExemptAppIds = tempExemptionListAppIdArray;
             mPowerExemptUserAppIds = powerSaveExemptionListUserAppIdArray;
@@ -1072,7 +1169,12 @@ public class AppStateTrackerImpl implements AppStateTracker {
             if (ArrayUtils.contains(mPowerExemptAllAppIds, appId)) {
                 return false;
             }
-            return (mForcedAppStandbyEnabled && isRunAnyRestrictedLocked(uid, packageName));
+            // If apps will be put into restricted standby bucket automatically on user-forced
+            // app standby, instead of blocking alarms completely, let the restricted standby bucket
+            // policy take care of it.
+            return (mForcedAppStandbyEnabled
+                    && !mActivityManagerInternal.isBgAutoRestrictedBucketFeatureFlagEnabled()
+                    && isRunAnyRestrictedLocked(uid, packageName));
         }
     }
 
@@ -1113,7 +1215,12 @@ public class AppStateTrackerImpl implements AppStateTracker {
                     || ArrayUtils.contains(mTempExemptAppIds, appId)) {
                 return false;
             }
-            if (mForcedAppStandbyEnabled && isRunAnyRestrictedLocked(uid, packageName)) {
+            // If apps will be put into restricted standby bucket automatically on user-forced
+            // app standby, instead of blocking jobs completely, let the restricted standby bucket
+            // policy take care of it.
+            if (mForcedAppStandbyEnabled
+                    && !mActivityManagerInternal.isBgAutoRestrictedBucketFeatureFlagEnabled()
+                    && isRunAnyRestrictedLocked(uid, packageName)) {
                 return true;
             }
             if (hasForegroundExemption) {
@@ -1203,6 +1310,18 @@ public class AppStateTrackerImpl implements AppStateTracker {
     }
 
     /**
+     * @return whether or not a UID is in either the user defined power-save exemption list or the
+               system full exemption list (not including except-idle)
+     */
+    public boolean isUidPowerSaveIdleExempt(int uid) {
+        final int appId = UserHandle.getAppId(uid);
+        synchronized (mLock) {
+            return ArrayUtils.contains(mPowerExemptUserAppIds, appId)
+                    || ArrayUtils.contains(mPowerExemptSystemAppIds, appId);
+        }
+    }
+
+    /**
      * @return whether a UID is in the temp power-save exemption list or not.
      *
      * Note clients normally shouldn't need to access it. It's only for dumpsys.
@@ -1238,6 +1357,9 @@ public class AppStateTrackerImpl implements AppStateTracker {
 
             pw.print("Active uids: ");
             dumpUids(pw, mActiveUids);
+
+            pw.print("System exemption list appids: ");
+            pw.println(Arrays.toString(mPowerExemptSystemAppIds));
 
             pw.print("Except-idle + user exemption list appids: ");
             pw.println(Arrays.toString(mPowerExemptAllAppIds));
@@ -1314,6 +1436,10 @@ public class AppStateTrackerImpl implements AppStateTracker {
                 if (mActiveUids.valueAt(i)) {
                     proto.write(AppStateTrackerProto.ACTIVE_UIDS, mActiveUids.keyAt(i));
                 }
+            }
+
+            for (int appId : mPowerExemptSystemAppIds) {
+                proto.write(AppStateTrackerProto.POWER_SAVE_SYSTEM_EXEMPT_APP_IDS, appId);
             }
 
             for (int appId : mPowerExemptAllAppIds) {

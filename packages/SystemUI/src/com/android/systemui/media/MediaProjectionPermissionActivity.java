@@ -18,6 +18,9 @@ package com.android.systemui.media;
 
 import static android.view.WindowManager.LayoutParams.SYSTEM_FLAG_HIDE_NON_SYSTEM_OVERLAY_WINDOWS;
 
+import static com.android.systemui.screenrecord.ScreenShareOptionKt.ENTIRE_SCREEN;
+import static com.android.systemui.screenrecord.ScreenShareOptionKt.SINGLE_APP;
+
 import android.app.Activity;
 import android.app.AlertDialog;
 import android.content.DialogInterface;
@@ -38,12 +41,15 @@ import android.text.TextPaint;
 import android.text.TextUtils;
 import android.text.style.StyleSpan;
 import android.util.Log;
-import android.view.View;
 import android.view.Window;
-import android.view.WindowManager;
-import android.widget.TextView;
 
+import com.android.systemui.Dependency;
 import com.android.systemui.R;
+import com.android.systemui.flags.FeatureFlags;
+import com.android.systemui.flags.Flags;
+import com.android.systemui.screenrecord.MediaProjectionPermissionDialog;
+import com.android.systemui.screenrecord.ScreenShareOption;
+import com.android.systemui.statusbar.phone.SystemUIDialog;
 import com.android.systemui.util.Utils;
 
 public class MediaProjectionPermissionActivity extends Activity
@@ -55,6 +61,7 @@ public class MediaProjectionPermissionActivity extends Activity
     private String mPackageName;
     private int mUid;
     private IMediaProjectionManager mService;
+    private FeatureFlags mFeatureFlags;
 
     private AlertDialog mDialog;
 
@@ -62,6 +69,7 @@ public class MediaProjectionPermissionActivity extends Activity
     public void onCreate(Bundle icicle) {
         super.onCreate(icicle);
 
+        mFeatureFlags = Dependency.get(FeatureFlags.class);
         mPackageName = getCallingPackage();
         IBinder b = ServiceManager.getService(MEDIA_PROJECTION_SERVICE);
         mService = IMediaProjectionManager.Stub.asInterface(b);
@@ -99,6 +107,7 @@ public class MediaProjectionPermissionActivity extends Activity
 
         CharSequence dialogText = null;
         CharSequence dialogTitle = null;
+        String appName = null;
         if (Utils.isHeadlessRemoteDisplayProvider(packageManager, mPackageName)) {
             dialogText = getString(R.string.media_projection_dialog_service_text);
             dialogTitle = getString(R.string.media_projection_dialog_service_title);
@@ -129,7 +138,7 @@ public class MediaProjectionPermissionActivity extends Activity
 
             String unsanitizedAppName = TextUtils.ellipsize(label,
                     paint, MAX_APP_NAME_SIZE_PX, TextUtils.TruncateAt.END).toString();
-            String appName = BidiFormatter.getInstance().unicodeWrap(unsanitizedAppName);
+            appName = BidiFormatter.getInstance().unicodeWrap(unsanitizedAppName);
 
             String actionText = getString(R.string.media_projection_dialog_text, appName);
             SpannableString message = new SpannableString(actionText);
@@ -143,25 +152,32 @@ public class MediaProjectionPermissionActivity extends Activity
             dialogTitle = getString(R.string.media_projection_dialog_title, appName);
         }
 
-        View dialogTitleView = View.inflate(this, R.layout.media_projection_dialog_title, null);
-        TextView titleText = (TextView) dialogTitleView.findViewById(R.id.dialog_title);
-        titleText.setText(dialogTitle);
+        if (isPartialScreenSharingEnabled()) {
+            mDialog = new MediaProjectionPermissionDialog(this, () -> {
+                ScreenShareOption selectedOption =
+                        ((MediaProjectionPermissionDialog) mDialog).getSelectedScreenShareOption();
+                grantMediaProjectionPermission(selectedOption.getMode());
+            }, appName);
+        } else {
+            AlertDialog.Builder dialogBuilder = new AlertDialog.Builder(this,
+                    R.style.Theme_SystemUI_Dialog)
+                    .setTitle(dialogTitle)
+                    .setIcon(R.drawable.ic_media_projection_permission)
+                    .setMessage(dialogText)
+                    .setPositiveButton(R.string.media_projection_action_text, this)
+                    .setNeutralButton(android.R.string.cancel, this);
+            mDialog = dialogBuilder.create();
+        }
 
-        mDialog = new AlertDialog.Builder(this)
-                .setCustomTitle(dialogTitleView)
-                .setMessage(dialogText)
-                .setPositiveButton(R.string.media_projection_action_text, this)
-                .setNegativeButton(android.R.string.cancel, this)
-                .setOnCancelListener(this)
-                .create();
+        SystemUIDialog.registerDismissListener(mDialog);
+        SystemUIDialog.applyFlags(mDialog);
+        SystemUIDialog.setDialogSize(mDialog);
 
+        mDialog.setOnCancelListener(this);
         mDialog.create();
         mDialog.getButton(DialogInterface.BUTTON_POSITIVE).setFilterTouchesWhenObscured(true);
 
         final Window w = mDialog.getWindow();
-        // QS is not closed when pressing CastTile. Match the type of the dialog shown from the
-        // tile.
-        w.setType(WindowManager.LayoutParams.TYPE_KEYGUARD_DIALOG);
         w.addSystemFlags(SYSTEM_FLAG_HIDE_NON_SYSTEM_OVERLAY_WINDOWS);
 
         mDialog.show();
@@ -177,9 +193,23 @@ public class MediaProjectionPermissionActivity extends Activity
 
     @Override
     public void onClick(DialogInterface dialog, int which) {
+        if (which == AlertDialog.BUTTON_POSITIVE) {
+            grantMediaProjectionPermission(ENTIRE_SCREEN);
+        }
+    }
+
+    private void grantMediaProjectionPermission(int screenShareMode) {
         try {
-            if (which == AlertDialog.BUTTON_POSITIVE) {
+            if (screenShareMode == ENTIRE_SCREEN) {
                 setResult(RESULT_OK, getMediaProjectionIntent(mUid, mPackageName));
+            }
+            if (isPartialScreenSharingEnabled() && screenShareMode == SINGLE_APP) {
+                IMediaProjection projection = createProjection(mUid, mPackageName);
+                final Intent intent = new Intent(this, MediaProjectionAppSelectorActivity.class);
+                intent.putExtra(MediaProjectionManager.EXTRA_MEDIA_PROJECTION,
+                        projection.asBinder());
+                intent.setFlags(Intent.FLAG_ACTIVITY_FORWARD_RESULT);
+                startActivity(intent);
             }
         } catch (RemoteException e) {
             Log.e(TAG, "Error granting projection permission", e);
@@ -192,10 +222,14 @@ public class MediaProjectionPermissionActivity extends Activity
         }
     }
 
+    private IMediaProjection createProjection(int uid, String packageName) throws RemoteException {
+        return mService.createProjection(uid, packageName,
+                MediaProjectionManager.TYPE_SCREEN_CAPTURE, false /* permanentGrant */);
+    }
+
     private Intent getMediaProjectionIntent(int uid, String packageName)
             throws RemoteException {
-        IMediaProjection projection = mService.createProjection(uid, packageName,
-                 MediaProjectionManager.TYPE_SCREEN_CAPTURE, false /* permanentGrant */);
+        IMediaProjection projection = createProjection(uid, packageName);
         Intent intent = new Intent();
         intent.putExtra(MediaProjectionManager.EXTRA_MEDIA_PROJECTION, projection.asBinder());
         return intent;
@@ -204,5 +238,9 @@ public class MediaProjectionPermissionActivity extends Activity
     @Override
     public void onCancel(DialogInterface dialog) {
         finish();
+    }
+
+    private boolean isPartialScreenSharingEnabled() {
+        return mFeatureFlags.isEnabled(Flags.WM_ENABLE_PARTIAL_SCREEN_SHARING);
     }
 }

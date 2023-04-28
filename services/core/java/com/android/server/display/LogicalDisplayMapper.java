@@ -16,7 +16,10 @@
 
 package com.android.server.display;
 
+import static android.view.Display.DEFAULT_DISPLAY;
+
 import android.annotation.NonNull;
+import android.annotation.Nullable;
 import android.content.Context;
 import android.hardware.devicestate.DeviceStateManager;
 import android.os.Handler;
@@ -29,13 +32,13 @@ import android.text.TextUtils;
 import android.util.IndentingPrintWriter;
 import android.util.Slog;
 import android.util.SparseArray;
+import android.util.SparseBooleanArray;
 import android.util.SparseIntArray;
 import android.view.Display;
 import android.view.DisplayAddress;
 import android.view.DisplayInfo;
 
 import com.android.internal.annotations.VisibleForTesting;
-import com.android.server.display.LogicalDisplay.DisplayPhase;
 import com.android.server.display.layout.Layout;
 
 import java.io.PrintWriter;
@@ -69,7 +72,7 @@ class LogicalDisplayMapper implements DisplayDeviceRepository.Listener {
     public static final int DISPLAY_GROUP_EVENT_CHANGED = 2;
     public static final int DISPLAY_GROUP_EVENT_REMOVED = 3;
 
-    private static final int TIMEOUT_STATE_TRANSITION_MILLIS = 300;
+    private static final int TIMEOUT_STATE_TRANSITION_MILLIS = 500;
 
     private static final int MSG_TRANSITION_TO_PENDING_DEVICE_STATE = 1;
 
@@ -98,9 +101,14 @@ class LogicalDisplayMapper implements DisplayDeviceRepository.Listener {
     private final boolean mSupportsConcurrentInternalDisplays;
 
     /**
-     * Wake the device when transitioning into this device state.
+     * Wake the device when transitioning into these device state.
      */
-    private final int mDeviceStateOnWhichToWakeUp;
+    private final SparseBooleanArray mDeviceStatesOnWhichToWakeUp;
+
+    /**
+     * Sleep the device when transitioning into these device state.
+     */
+    private final SparseBooleanArray mDeviceStatesOnWhichToSleep;
 
     /**
      * Map of all logical displays indexed by logical display id.
@@ -151,22 +159,33 @@ class LogicalDisplayMapper implements DisplayDeviceRepository.Listener {
     private Layout mCurrentLayout = null;
     private int mDeviceState = DeviceStateManager.INVALID_DEVICE_STATE;
     private int mPendingDeviceState = DeviceStateManager.INVALID_DEVICE_STATE;
+    private boolean mBootCompleted = false;
+    private boolean mInteractive;
 
     LogicalDisplayMapper(@NonNull Context context, @NonNull DisplayDeviceRepository repo,
             @NonNull Listener listener, @NonNull DisplayManagerService.SyncRoot syncRoot,
             @NonNull Handler handler) {
+        this(context, repo, listener, syncRoot, handler, new DeviceStateToLayoutMap());
+    }
+
+    LogicalDisplayMapper(@NonNull Context context, @NonNull DisplayDeviceRepository repo,
+            @NonNull Listener listener, @NonNull DisplayManagerService.SyncRoot syncRoot,
+            @NonNull Handler handler, @NonNull DeviceStateToLayoutMap deviceStateToLayoutMap) {
         mSyncRoot = syncRoot;
         mPowerManager = context.getSystemService(PowerManager.class);
+        mInteractive = mPowerManager.isInteractive();
         mHandler = new LogicalDisplayMapperHandler(handler.getLooper());
         mDisplayDeviceRepo = repo;
         mListener = listener;
         mSingleDisplayDemoMode = SystemProperties.getBoolean("persist.demo.singledisplay", false);
         mSupportsConcurrentInternalDisplays = context.getResources().getBoolean(
                 com.android.internal.R.bool.config_supportsConcurrentInternalDisplays);
-        mDeviceStateOnWhichToWakeUp = context.getResources().getInteger(
-                com.android.internal.R.integer.config_deviceStateOnWhichToWakeUp);
+        mDeviceStatesOnWhichToWakeUp = toSparseBooleanArray(context.getResources().getIntArray(
+                com.android.internal.R.array.config_deviceStatesOnWhichToWakeUp));
+        mDeviceStatesOnWhichToSleep = toSparseBooleanArray(context.getResources().getIntArray(
+                com.android.internal.R.array.config_deviceStatesOnWhichToSleep));
         mDisplayDeviceRepo.addListener(this);
-        mDeviceStateToLayoutMap = new DeviceStateToLayoutMap();
+        mDeviceStateToLayoutMap = deviceStateToLayoutMap;
     }
 
     @Override
@@ -191,6 +210,7 @@ class LogicalDisplayMapper implements DisplayDeviceRepository.Listener {
                 if (DEBUG) {
                     Slog.d(TAG, "Display device removed: " + device.getDisplayDeviceInfoLocked());
                 }
+                handleDisplayDeviceRemovedLocked(device);
                 updateLogicalDisplaysLocked();
                 break;
         }
@@ -202,10 +222,22 @@ class LogicalDisplayMapper implements DisplayDeviceRepository.Listener {
     }
 
     public LogicalDisplay getDisplayLocked(int displayId) {
-        return mLogicalDisplays.get(displayId);
+        return getDisplayLocked(displayId, /* includeDisabled= */ true);
+    }
+
+    public LogicalDisplay getDisplayLocked(int displayId, boolean includeDisabled) {
+        LogicalDisplay display = mLogicalDisplays.get(displayId);
+        if (display == null || display.isEnabledLocked() || includeDisabled) {
+            return display;
+        }
+        return null;
     }
 
     public LogicalDisplay getDisplayLocked(DisplayDevice device) {
+        return getDisplayLocked(device, /* includeDisabled= */ true);
+    }
+
+    public LogicalDisplay getDisplayLocked(DisplayDevice device, boolean includeDisabled) {
         if (device == null) {
             return null;
         }
@@ -213,21 +245,26 @@ class LogicalDisplayMapper implements DisplayDeviceRepository.Listener {
         for (int i = 0; i < count; i++) {
             final LogicalDisplay display = mLogicalDisplays.valueAt(i);
             if (display.getPrimaryDisplayDeviceLocked() == device) {
-                return display;
+                if (display.isEnabledLocked() || includeDisabled) {
+                    return display;
+                }
+                return null;
             }
         }
         return null;
     }
 
-    public int[] getDisplayIdsLocked(int callingUid) {
+    public int[] getDisplayIdsLocked(int callingUid, boolean includeDisabled) {
         final int count = mLogicalDisplays.size();
         int[] displayIds = new int[count];
         int n = 0;
         for (int i = 0; i < count; i++) {
             LogicalDisplay display = mLogicalDisplays.valueAt(i);
-            DisplayInfo info = display.getDisplayInfoLocked();
-            if (info.hasAccess(callingUid)) {
-                displayIds[n++] = mLogicalDisplays.keyAt(i);
+            if (display.isEnabledLocked() || includeDisabled) {
+                DisplayInfo info = display.getDisplayInfoLocked();
+                if (info.hasAccess(callingUid)) {
+                    displayIds[n++] = mLogicalDisplays.keyAt(i);
+                }
             }
         }
         if (n != count) {
@@ -265,6 +302,47 @@ class LogicalDisplayMapper implements DisplayDeviceRepository.Listener {
         return mDisplayGroups.get(groupId);
     }
 
+    /**
+     * Returns the {@link DisplayInfo} for this device state, indicated by the given display id. The
+     * DisplayInfo represents the attributes of the indicated display in the layout associated with
+     * this state. This is used to get display information for various displays in various states;
+     * e.g. to help apps preload resources for the possible display states.
+     *
+     * @param deviceState the state to query possible layouts for
+     * @param displayId   the display id to retrieve
+     * @return {@code null} if no corresponding {@link DisplayInfo} could be found, or the
+     * {@link DisplayInfo} with a matching display id.
+     */
+    @Nullable
+    public DisplayInfo getDisplayInfoForStateLocked(int deviceState, int displayId) {
+        // Retrieve the layout for this particular state.
+        final Layout layout = mDeviceStateToLayoutMap.get(deviceState);
+        if (layout == null) {
+            return null;
+        }
+        // Retrieve the details of the given display within this layout.
+        Layout.Display display = layout.getById(displayId);
+        if (display == null) {
+            return null;
+        }
+        // Retrieve the display info for the display that matches the display id.
+        final DisplayDevice device = mDisplayDeviceRepo.getByAddressLocked(display.getAddress());
+        if (device == null) {
+            Slog.w(TAG, "The display device (" + display.getAddress() + "), is not available"
+                    + " for the display state " + mDeviceState);
+            return null;
+        }
+        LogicalDisplay logicalDisplay = getDisplayLocked(device, /* includeDisabled= */ true);
+        if (logicalDisplay == null) {
+            Slog.w(TAG, "The logical display associated with address (" + display.getAddress()
+                    + "), is not available for the display state " + mDeviceState);
+            return null;
+        }
+        DisplayInfo displayInfo = new DisplayInfo(logicalDisplay.getDisplayInfoLocked());
+        displayInfo.displayId = displayId;
+        return displayInfo;
+    }
+
     public void dumpLocked(PrintWriter pw) {
         pw.println("LogicalDisplayMapper:");
         IndentingPrintWriter ipw = new IndentingPrintWriter(pw, "  ");
@@ -272,7 +350,9 @@ class LogicalDisplayMapper implements DisplayDeviceRepository.Listener {
 
         ipw.println("mSingleDisplayDemoMode=" + mSingleDisplayDemoMode);
         ipw.println("mCurrentLayout=" + mCurrentLayout);
-        ipw.println("mDeviceStateOnWhichToWakeUp=" + mDeviceStateOnWhichToWakeUp);
+        ipw.println("mDeviceStatesOnWhichToWakeUp=" + mDeviceStatesOnWhichToWakeUp);
+        ipw.println("mDeviceStatesOnWhichToSleep=" + mDeviceStatesOnWhichToSleep);
+        ipw.println("mInteractive=" + mInteractive);
 
         final int logicalDisplayCount = mLogicalDisplays.size();
         ipw.println();
@@ -289,25 +369,24 @@ class LogicalDisplayMapper implements DisplayDeviceRepository.Listener {
         mDeviceStateToLayoutMap.dumpLocked(ipw);
     }
 
-    void setDeviceStateLocked(int state) {
-        final boolean isInteractive  = mPowerManager.isInteractive();
+    void setDeviceStateLocked(int state, boolean isOverrideActive) {
         Slog.i(TAG, "Requesting Transition to state: " + state + ", from state=" + mDeviceState
-                + ", interactive=" + isInteractive);
+                + ", interactive=" + mInteractive + ", mBootCompleted=" + mBootCompleted);
         // As part of a state transition, we may need to turn off some displays temporarily so that
         // the transition is smooth. Plus, on some devices, only one internal displays can be
-        // on at a time. We use DISPLAY_PHASE_LAYOUT_TRANSITION to mark a display that needs to be
+        // on at a time. We use LogicalDisplay.setIsInTransition to mark a display that needs to be
         // temporarily turned off.
-        if (mDeviceState != DeviceStateManager.INVALID_DEVICE_STATE) {
-            resetLayoutLocked(mDeviceState, state, LogicalDisplay.DISPLAY_PHASE_LAYOUT_TRANSITION);
-        }
+        resetLayoutLocked(mDeviceState, state, /* isStateChangeStarting= */ true);
         mPendingDeviceState = state;
-        final boolean wakeDevice = mPendingDeviceState == mDeviceStateOnWhichToWakeUp
-                && !isInteractive;
+        final boolean wakeDevice = shouldDeviceBeWoken(mPendingDeviceState, mDeviceState,
+                mInteractive, mBootCompleted);
+        final boolean sleepDevice = shouldDeviceBePutToSleep(mPendingDeviceState, mDeviceState,
+                isOverrideActive, mInteractive, mBootCompleted);
 
-        // If all displays are off already, we can just transition here, unless the device is asleep
-        // and we plan on waking it up. In that case, fall through to the call to wakeUp, and defer
-        // the final transition until later once the device is awake.
-        if (areAllTransitioningDisplaysOffLocked() && !wakeDevice) {
+        // If all displays are off already, we can just transition here, unless we are trying to
+        // wake or sleep the device as part of this transition. In that case defer the final
+        // transition until later once the device is awake/asleep.
+        if (areAllTransitioningDisplaysOffLocked() && !wakeDevice && !sleepDevice) {
             transitionToPendingStateLocked();
             return;
         }
@@ -319,22 +398,96 @@ class LogicalDisplayMapper implements DisplayDeviceRepository.Listener {
         // start turning OFF in preparation for the new layout.
         updateLogicalDisplaysLocked();
 
-        if (wakeDevice) {
-            // We already told the displays to turn off, now we need to wake the device as
-            // we transition to this new state. We do it here so that the waking happens between the
-            // transition from one layout to another.
-            mPowerManager.wakeUp(SystemClock.uptimeMillis(), PowerManager.WAKE_REASON_UNFOLD_DEVICE,
-                    "server.display:unfold");
+        if (wakeDevice || sleepDevice) {
+            if (wakeDevice) {
+                // We already told the displays to turn off, now we need to wake the device as
+                // we transition to this new state. We do it here so that the waking happens
+                // between the transition from one layout to another.
+                mHandler.post(() -> {
+                    mPowerManager.wakeUp(SystemClock.uptimeMillis(),
+                            PowerManager.WAKE_REASON_UNFOLD_DEVICE, "server.display:unfold");
+                });
+            } else if (sleepDevice) {
+                // Send the device to sleep when required.
+                mHandler.post(() -> {
+                    mPowerManager.goToSleep(SystemClock.uptimeMillis(),
+                            PowerManager.GO_TO_SLEEP_REASON_DEVICE_FOLD,
+                            PowerManager.GO_TO_SLEEP_FLAG_SOFT_SLEEP);
+                });
+            }
         }
+
         mHandler.sendEmptyMessageDelayed(MSG_TRANSITION_TO_PENDING_DEVICE_STATE,
                 TIMEOUT_STATE_TRANSITION_MILLIS);
+    }
+
+    void onBootCompleted() {
+        synchronized (mSyncRoot) {
+            mBootCompleted = true;
+        }
+    }
+
+    void onEarlyInteractivityChange(boolean interactive) {
+        synchronized (mSyncRoot) {
+            if (mInteractive != interactive) {
+                mInteractive = interactive;
+                finishStateTransitionLocked(false /*force*/);
+            }
+        }
+    }
+
+    /**
+     * Returns if the device should be woken up or not. Called to check if the device state we are
+     * moving to is one that should awake the device, as well as if we are moving from a device
+     * state that shouldn't have been already woken from.
+     *
+     * @param pendingState device state we are moving to
+     * @param currentState device state we are currently in
+     * @param isInteractive if the device is in an interactive state
+     * @param isBootCompleted is the device fully booted
+     *
+     * @see #shouldDeviceBePutToSleep
+     * @see #setDeviceStateLocked
+     */
+    @VisibleForTesting
+    boolean shouldDeviceBeWoken(int pendingState, int currentState, boolean isInteractive,
+            boolean isBootCompleted) {
+        return mDeviceStatesOnWhichToWakeUp.get(pendingState)
+                && !mDeviceStatesOnWhichToWakeUp.get(currentState)
+                && !isInteractive && isBootCompleted;
+    }
+
+    /**
+     * Returns if the device should be put to sleep or not.
+     *
+     * Includes a check to verify that the device state that we are moving to, {@code pendingState},
+     * is the same as the physical state of the device, {@code baseState}. Different values for
+     * these parameters indicate a device state override is active, and we shouldn't put the device
+     * to sleep to provide a better user experience.
+     *
+     * @param pendingState device state we are moving to
+     * @param currentState device state we are currently in
+     * @param isOverrideActive if a device state override is currently active or not
+     * @param isInteractive if the device is in an interactive state
+     * @param isBootCompleted is the device fully booted
+     *
+     * @see #shouldDeviceBeWoken
+     * @see #setDeviceStateLocked
+     */
+    @VisibleForTesting
+    boolean shouldDeviceBePutToSleep(int pendingState, int currentState, boolean isOverrideActive,
+            boolean isInteractive, boolean isBootCompleted) {
+        return mDeviceStatesOnWhichToSleep.get(pendingState)
+                && !mDeviceStatesOnWhichToSleep.get(currentState)
+                && !isOverrideActive
+                && isInteractive && isBootCompleted;
     }
 
     private boolean areAllTransitioningDisplaysOffLocked() {
         final int count = mLogicalDisplays.size();
         for (int i = 0; i < count; i++) {
             final LogicalDisplay display = mLogicalDisplays.valueAt(i);
-            if (display.getPhase() != LogicalDisplay.DISPLAY_PHASE_LAYOUT_TRANSITION) {
+            if (!display.isInTransitionLocked()) {
                 continue;
             }
 
@@ -350,7 +503,7 @@ class LogicalDisplayMapper implements DisplayDeviceRepository.Listener {
     }
 
     private void transitionToPendingStateLocked() {
-        resetLayoutLocked(mDeviceState, mPendingDeviceState, LogicalDisplay.DISPLAY_PHASE_ENABLED);
+        resetLayoutLocked(mDeviceState, mPendingDeviceState, /* isStateChangeStarting= */ false);
         mDeviceState = mPendingDeviceState;
         mPendingDeviceState = DeviceStateManager.INVALID_DEVICE_STATE;
         applyLayoutLocked();
@@ -362,24 +515,35 @@ class LogicalDisplayMapper implements DisplayDeviceRepository.Listener {
             return;
         }
 
+        final boolean waitingToWakeDevice = mDeviceStatesOnWhichToWakeUp.get(mPendingDeviceState)
+                && !mDeviceStatesOnWhichToWakeUp.get(mDeviceState)
+                && !mInteractive && mBootCompleted;
+        final boolean waitingToSleepDevice = mDeviceStatesOnWhichToSleep.get(mPendingDeviceState)
+                && !mDeviceStatesOnWhichToSleep.get(mDeviceState)
+                && mInteractive && mBootCompleted;
+
         final boolean displaysOff = areAllTransitioningDisplaysOffLocked();
-        if (displaysOff || force) {
+        final boolean isReadyToTransition = displaysOff && !waitingToWakeDevice
+                && !waitingToSleepDevice;
+
+        if (isReadyToTransition || force) {
             transitionToPendingStateLocked();
             mHandler.removeMessages(MSG_TRANSITION_TO_PENDING_DEVICE_STATE);
         } else if (DEBUG) {
             Slog.d(TAG, "Not yet ready to transition to state=" + mPendingDeviceState
-                    + " with displays-off=" + displaysOff + " and force=" + force);
+                    + " with displays-off=" + displaysOff + ", force=" + force
+                    + ", mInteractive=" + mInteractive + ", isReady=" + isReadyToTransition);
         }
     }
 
     private void handleDisplayDeviceAddedLocked(DisplayDevice device) {
         DisplayDeviceInfo deviceInfo = device.getDisplayDeviceInfoLocked();
-        // Internal Displays need to have additional initialization.
-        // This initializes a default dynamic display layout for INTERNAL
-        // devices, which is used as a fallback in case no static layout definitions
+        // The default Display needs to have additional initialization.
+        // This initializes a default dynamic display layout for the default
+        // device, which is used as a fallback in case no static layout definitions
         // exist or cannot be loaded.
-        if (deviceInfo.type == Display.TYPE_INTERNAL) {
-            initializeInternalDisplayDeviceLocked(device);
+        if ((deviceInfo.flags & DisplayDeviceInfo.FLAG_ALLOWED_TO_BE_DEFAULT_DISPLAY) != 0) {
+            initializeDefaultDisplayDeviceLocked(device);
         }
 
         // Create a logical display for the new display device
@@ -388,6 +552,38 @@ class LogicalDisplayMapper implements DisplayDeviceRepository.Listener {
 
         applyLayoutLocked();
         updateLogicalDisplaysLocked();
+    }
+
+    private void handleDisplayDeviceRemovedLocked(DisplayDevice device) {
+        final Layout layout = mDeviceStateToLayoutMap.get(DeviceStateToLayoutMap.STATE_DEFAULT);
+        Layout.Display layoutDisplay = layout.getById(DEFAULT_DISPLAY);
+        if (layoutDisplay == null) {
+            return;
+        }
+        DisplayDeviceInfo deviceInfo = device.getDisplayDeviceInfoLocked();
+
+        if (layoutDisplay.getAddress().equals(deviceInfo.address)) {
+            layout.removeDisplayLocked(DEFAULT_DISPLAY);
+
+            // Need to find another local display and make it default
+            for (int i = 0; i < mLogicalDisplays.size(); i++) {
+                LogicalDisplay nextDisplay = mLogicalDisplays.valueAt(i);
+                DisplayDevice nextDevice = nextDisplay.getPrimaryDisplayDeviceLocked();
+                if (nextDevice == null) {
+                    continue;
+                }
+                DisplayDeviceInfo nextDeviceInfo = nextDevice.getDisplayDeviceInfoLocked();
+
+                if ((nextDeviceInfo.flags
+                        & DisplayDeviceInfo.FLAG_ALLOWED_TO_BE_DEFAULT_DISPLAY) != 0
+                        && !nextDeviceInfo.address.equals(deviceInfo.address)) {
+                    layout.createDisplayLocked(nextDeviceInfo.address,
+                            /* isDefault= */ true, /* isEnabled= */ true);
+                    applyLayoutLocked();
+                    return;
+                }
+            }
+        }
     }
 
     /**
@@ -599,17 +795,17 @@ class LogicalDisplayMapper implements DisplayDeviceRepository.Listener {
 
     /**
      * Goes through all the displays used in the layouts for the specified {@code fromState} and
-     * {@code toState} and applies the specified {@code phase}. When a new layout is requested, we
-     * put the displays that will change into a transitional phase so that they can all be turned
-     * OFF. Once all are confirmed OFF, then this method gets called again to reset the phase to
-     * normal operation. This helps to ensure that all display-OFF requests are made before
+     * {@code toState} and un/marks them for transition. When a new layout is requested, we
+     * mark the displays that will change into a transitional phase so that they can all be turned
+     * OFF. Once all are confirmed OFF, then this method gets called again to reset transition
+     * marker. This helps to ensure that all display-OFF requests are made before
      * display-ON which in turn hides any resizing-jank windows might incur when switching displays.
      *
      * @param fromState The state we are switching from.
      * @param toState The state we are switching to.
-     * @param phase The new phase to apply to the displays.
+     * @param isStateChangeStarting Indicates whether to start or end Transition phase.
      */
-    private void resetLayoutLocked(int fromState, int toState, @DisplayPhase int phase) {
+    private void resetLayoutLocked(int fromState, int toState, boolean isStateChangeStarting) {
         final Layout fromLayout = mDeviceStateToLayoutMap.get(fromState);
         final Layout toLayout = mDeviceStateToLayoutMap.get(toState);
 
@@ -627,11 +823,15 @@ class LogicalDisplayMapper implements DisplayDeviceRepository.Listener {
             // new layout.
             final DisplayAddress address = device.getDisplayDeviceInfoLocked().address;
 
-            // Virtual displays do not have addresses.
+            // Virtual displays do not have addresses, so account for nulls.
             final Layout.Display fromDisplay =
                     address != null ? fromLayout.getByAddress(address) : null;
             final Layout.Display toDisplay =
                     address != null ? toLayout.getByAddress(address) : null;
+
+            // If the display is in one of the layouts but not the other, then the content will
+            // change, so in this case we also want to blank the displays to avoid jank.
+            final boolean displayNotInBothLayouts = (fromDisplay == null) != (toDisplay == null);
 
             // If a layout doesn't mention a display-device at all, then the display-device defaults
             // to enabled. This is why we treat null as "enabled" in the code below.
@@ -647,16 +847,23 @@ class LogicalDisplayMapper implements DisplayDeviceRepository.Listener {
             // 3) It's enabled, but it's mapped to a new logical display ID. To the user this
             //    would look like apps moving from one screen to another since task-stacks stay
             //    with the logical display [ID].
+            // 4) It's in one layout but not the other, so the content will change.
             final boolean isTransitioning =
-                    (logicalDisplay.getPhase() == LogicalDisplay.DISPLAY_PHASE_LAYOUT_TRANSITION)
+                    logicalDisplay.isInTransitionLocked()
                     || (wasEnabled != willBeEnabled)
-                    || deviceHasNewLogicalDisplayId;
+                    || deviceHasNewLogicalDisplayId
+                    || displayNotInBothLayouts;
 
             if (isTransitioning) {
-                setDisplayPhase(logicalDisplay, phase);
-                if (phase == LogicalDisplay.DISPLAY_PHASE_LAYOUT_TRANSITION) {
-                    mUpdatedLogicalDisplays.put(displayId, UPDATE_STATE_TRANSITION);
+                if (isStateChangeStarting != logicalDisplay.isInTransitionLocked()) {
+                    Slog.i(TAG, "Set isInTransition on display " + displayId + ": "
+                            + isStateChangeStarting);
                 }
+                // This will either mark the display as "transitioning" if we are starting to change
+                // the device state, or remove the transitioning marker if the state change is
+                // ending.
+                logicalDisplay.setIsInTransitionLocked(isStateChangeStarting);
+                mUpdatedLogicalDisplays.put(displayId, UPDATE_STATE_TRANSITION);
             }
         }
     }
@@ -701,9 +908,7 @@ class LogicalDisplayMapper implements DisplayDeviceRepository.Listener {
                 newDisplay.swapDisplaysLocked(oldDisplay);
             }
 
-            if (!displayLayout.isEnabled()) {
-                setDisplayPhase(newDisplay, LogicalDisplay.DISPLAY_PHASE_DISABLED);
-            }
+            setEnabledLocked(newDisplay, displayLayout.isEnabled());
         }
 
     }
@@ -715,7 +920,6 @@ class LogicalDisplayMapper implements DisplayDeviceRepository.Listener {
      *
      * @param device The device to associate with the LogicalDisplay.
      * @param displayId The display ID to give the new display. If invalid, a new ID is assigned.
-     * @param isDefault Indicates if we are creating the default display.
      * @return The new logical display if created, null otherwise.
      */
     private LogicalDisplay createNewLogicalDisplayLocked(DisplayDevice device, int displayId) {
@@ -723,45 +927,57 @@ class LogicalDisplayMapper implements DisplayDeviceRepository.Listener {
         final LogicalDisplay display = new LogicalDisplay(displayId, layerStack, device);
         display.updateLocked(mDisplayDeviceRepo);
         mLogicalDisplays.put(displayId, display);
-        setDisplayPhase(display, LogicalDisplay.DISPLAY_PHASE_ENABLED);
         return display;
     }
 
-    private void setDisplayPhase(LogicalDisplay display, @DisplayPhase int phase) {
+    private void setEnabledLocked(LogicalDisplay display, boolean isEnabled) {
         final int displayId = display.getDisplayIdLocked();
         final DisplayInfo info = display.getDisplayInfoLocked();
 
         final boolean disallowSecondaryDisplay = mSingleDisplayDemoMode
                 && (info.type != Display.TYPE_INTERNAL);
-        if (phase != LogicalDisplay.DISPLAY_PHASE_DISABLED && disallowSecondaryDisplay) {
+        if (isEnabled && disallowSecondaryDisplay) {
             Slog.i(TAG, "Not creating a logical display for a secondary display because single"
                     + " display demo mode is enabled: " + display.getDisplayInfoLocked());
-            phase = LogicalDisplay.DISPLAY_PHASE_DISABLED;
+            isEnabled = false;
         }
 
-        display.setPhase(phase);
+        if (display.isEnabledLocked() != isEnabled) {
+            Slog.i(TAG, "SetEnabled on display " + displayId + ": " + isEnabled);
+            display.setEnabledLocked(isEnabled);
+        }
     }
 
     private int assignDisplayGroupIdLocked(boolean isOwnDisplayGroup) {
         return isOwnDisplayGroup ? mNextNonDefaultGroupId++ : Display.DEFAULT_DISPLAY_GROUP;
     }
 
-    private void initializeInternalDisplayDeviceLocked(DisplayDevice device) {
+    private void initializeDefaultDisplayDeviceLocked(DisplayDevice device) {
         // We always want to make sure that our default layout creates a logical
-        // display for every internal display device that is found.
-        // To that end, when we are notified of a new internal display, we add it to
+        // display for the default display device that is found.
+        // To that end, when we are notified of a new default display, we add it to
         // the default layout definition if it is not already there.
         final Layout layout = mDeviceStateToLayoutMap.get(DeviceStateToLayoutMap.STATE_DEFAULT);
+        if (layout.getById(DEFAULT_DISPLAY) != null) {
+            // The layout should only have one default display
+            return;
+        }
         final DisplayDeviceInfo info = device.getDisplayDeviceInfoLocked();
-        final boolean isDefault = (info.flags & DisplayDeviceInfo.FLAG_DEFAULT_DISPLAY) != 0;
-        final boolean isEnabled = isDefault || mSupportsConcurrentInternalDisplays;
-        layout.createDisplayLocked(info.address, isDefault, isEnabled);
+        layout.createDisplayLocked(info.address, /* isDefault= */ true, /* isEnabled= */ true);
     }
 
     private int assignLayerStackLocked(int displayId) {
         // Currently layer stacks and display ids are the same.
         // This need not be the case.
         return displayId;
+    }
+
+    private SparseBooleanArray toSparseBooleanArray(int[] input) {
+        final SparseBooleanArray retval = new SparseBooleanArray(2);
+        for (int i = 0; input != null && i < input.length; i++) {
+            retval.put(input[i], true);
+        }
+        return retval;
     }
 
     private String displayEventToString(int msg) {
@@ -804,5 +1020,4 @@ class LogicalDisplayMapper implements DisplayDeviceRepository.Listener {
             }
         }
     }
-
 }

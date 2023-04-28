@@ -16,7 +16,9 @@
 
 package com.android.server.audio;
 
+import android.annotation.NonNull;
 import android.media.AudioAttributes;
+import android.media.AudioDeviceAttributes;
 import android.media.AudioManager;
 import android.media.AudioSystem;
 import android.media.MediaMetrics;
@@ -116,10 +118,11 @@ public class AudioServiceEvents {
         @Override
         public String eventToString() {
             return new StringBuilder("setWiredDeviceConnectionState(")
-                    .append(" type:").append(Integer.toHexString(mState.mType))
+                    .append(" type:").append(
+                            Integer.toHexString(mState.mAttributes.getInternalType()))
                     .append(" state:").append(AudioSystem.deviceStateToString(mState.mState))
-                    .append(" addr:").append(mState.mAddress)
-                    .append(" name:").append(mState.mName)
+                    .append(" addr:").append(mState.mAttributes.getAddress())
+                    .append(" name:").append(mState.mAttributes.getName())
                     .append(") from ").append(mState.mCaller).toString();
         }
     }
@@ -144,6 +147,43 @@ public class AudioServiceEvents {
         }
     }
 
+    static final class DeviceVolumeEvent extends AudioEventLogger.Event {
+        final int mStream;
+        final int mVolIndex;
+        final String mDeviceNativeType;
+        final String mDeviceAddress;
+        final String mCaller;
+
+        DeviceVolumeEvent(int streamType, int index, @NonNull AudioDeviceAttributes device,
+                String callingPackage) {
+            mStream = streamType;
+            mVolIndex = index;
+            mDeviceNativeType = "0x" + Integer.toHexString(device.getInternalType());
+            mDeviceAddress = device.getAddress();
+            mCaller = callingPackage;
+            // log metrics
+            new MediaMetrics.Item(MediaMetrics.Name.AUDIO_VOLUME_EVENT)
+                    .set(MediaMetrics.Property.EVENT, "setDeviceVolume")
+                    .set(MediaMetrics.Property.STREAM_TYPE,
+                            AudioSystem.streamToString(mStream))
+                    .set(MediaMetrics.Property.INDEX, mVolIndex)
+                    .set(MediaMetrics.Property.DEVICE, mDeviceNativeType)
+                    .set(MediaMetrics.Property.ADDRESS, mDeviceAddress)
+                    .set(MediaMetrics.Property.CALLING_PACKAGE, mCaller)
+                    .record();
+        }
+
+        @Override
+        public String eventToString() {
+            return new StringBuilder("setDeviceVolume(stream:")
+                    .append(AudioSystem.streamToString(mStream))
+                    .append(" index:").append(mVolIndex)
+                    .append(" device:").append(mDeviceNativeType)
+                    .append(" addr:").append(mDeviceAddress)
+                    .append(") from ").append(mCaller).toString();
+        }
+    }
+
     final static class VolumeEvent extends AudioEventLogger.Event {
         static final int VOL_ADJUST_SUGG_VOL = 0;
         static final int VOL_ADJUST_STREAM_VOL = 1;
@@ -155,6 +195,7 @@ public class AudioServiceEvents {
         static final int VOL_MODE_CHANGE_HEARING_AID = 7;
         static final int VOL_SET_GROUP_VOL = 8;
         static final int VOL_MUTE_STREAM_INT = 9;
+        static final int VOL_SET_LE_AUDIO_VOL = 10;
 
         final int mOp;
         final int mStream;
@@ -310,6 +351,13 @@ public class AudioServiceEvents {
                             .set(MediaMetrics.Property.INDEX, mVal1)
                             .record();
                     return;
+                case VOL_SET_LE_AUDIO_VOL:
+                    new MediaMetrics.Item(mMetricsId)
+                            .set(MediaMetrics.Property.EVENT, "setLeAudioVolume")
+                            .set(MediaMetrics.Property.INDEX, mVal1)
+                            .set(MediaMetrics.Property.MAX_INDEX, mVal2)
+                            .record();
+                    return;
                 case VOL_SET_AVRCP_VOL:
                     new MediaMetrics.Item(mMetricsId)
                             .set(MediaMetrics.Property.EVENT, "setAvrcpVolume")
@@ -381,6 +429,11 @@ public class AudioServiceEvents {
                     return new StringBuilder("setHearingAidVolume:")
                             .append(" index:").append(mVal1)
                             .append(" gain dB:").append(mVal2)
+                            .toString();
+                case VOL_SET_LE_AUDIO_VOL:
+                    return new StringBuilder("setLeAudioVolume:")
+                            .append(" index:").append(mVal1)
+                            .append(" maxIndex:").append(mVal2)
                             .toString();
                 case VOL_SET_AVRCP_VOL:
                     return new StringBuilder("setAvrcpVolume:")

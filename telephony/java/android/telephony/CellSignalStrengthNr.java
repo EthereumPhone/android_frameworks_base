@@ -49,7 +49,7 @@ public final class CellSignalStrengthNr extends CellSignalStrength implements Pa
     private static final String TAG = "CellSignalStrengthNr";
 
     // Lifted from Default carrier configs and max range of SSRSRP
-    // Boundaries: [-140 dB, -44 dB]
+    // Boundaries: [-156 dB, -31 dB]
     private int[] mSsRsrpThresholds = new int[] {
             -110, /* SIGNAL_STRENGTH_POOR */
             -90, /* SIGNAL_STRENGTH_MODERATE */
@@ -173,14 +173,14 @@ public final class CellSignalStrengthNr extends CellSignalStrength implements Pa
      */
     public CellSignalStrengthNr(int csiRsrp, int csiRsrq, int csiSinr, int csiCqiTableIndex,
             List<Byte> csiCqiReport, int ssRsrp, int ssRsrq, int ssSinr) {
-        mCsiRsrp = inRangeOrUnavailable(csiRsrp, -140, -44);
+        mCsiRsrp = inRangeOrUnavailable(csiRsrp, -156, -31);
         mCsiRsrq = inRangeOrUnavailable(csiRsrq, -20, -3);
         mCsiSinr = inRangeOrUnavailable(csiSinr, -23, 23);
         mCsiCqiTableIndex = inRangeOrUnavailable(csiCqiTableIndex, 1, 3);
         mCsiCqiReport = csiCqiReport.stream()
-                .map(cqi -> new Integer(inRangeOrUnavailable(Byte.toUnsignedInt(cqi), 0, 15)))
+                .map(cqi -> inRangeOrUnavailable(Byte.toUnsignedInt(cqi), 0, 15))
                 .collect(Collectors.toList());
-        mSsRsrp = inRangeOrUnavailable(ssRsrp, -140, -44);
+        mSsRsrp = inRangeOrUnavailable(ssRsrp, -156, -31);
         mSsRsrq = inRangeOrUnavailable(ssRsrq, -43, 20);
         mSsSinr = inRangeOrUnavailable(ssSinr, -23, 40);
         updateLevel(null, null);
@@ -202,35 +202,18 @@ public final class CellSignalStrengthNr extends CellSignalStrength implements Pa
     }
 
     /**
-     * @hide
-     * @param ss signal strength from modem.
-     */
-    public CellSignalStrengthNr(android.hardware.radio.V1_4.NrSignalStrength ss) {
-        this(flip(ss.csiRsrp), flip(ss.csiRsrq), ss.csiSinr, flip(ss.ssRsrp), flip(ss.ssRsrq),
-                ss.ssSinr);
-    }
-
-    /**
-     * @hide
-     * @param ss signal strength from modem.
-     */
-    public CellSignalStrengthNr(android.hardware.radio.V1_6.NrSignalStrength ss) {
-        this(flip(ss.base.csiRsrp), flip(ss.base.csiRsrq), ss.base.csiSinr, ss.csiCqiTableIndex,
-                ss.csiCqiReport, flip(ss.base.ssRsrp), flip(ss.base.ssRsrq), ss.base.ssSinr);
-    }
-
-    /**
      * Flip sign cell strength value when taking in the value from hal
      * @param val cell strength value
      * @return flipped value
+     * @hide
      */
-    private static int flip(int val) {
+    public static int flip(int val) {
         return val != CellInfo.UNAVAILABLE ? -val : val;
     }
 
     /**
-     * Reference: 3GPP TS 38.215.
-     * Range: -140 dBm to -44 dBm.
+     * Reference: 3GPP TS 38.133 10.1.6.1.
+     * Range: -156 dBm to -31 dBm.
      * @return SS reference signal received power, {@link CellInfo#UNAVAILABLE} means unreported
      * value.
      */
@@ -259,8 +242,8 @@ public final class CellSignalStrengthNr extends CellSignalStrength implements Pa
     }
 
     /**
-     * Reference: 3GPP TS 38.215.
-     * Range: -140 dBm to -44 dBm.
+     * Reference: 3GPP TS 38.133 10.1.6.1.
+     * Range: -156 dBm to -31 dBm.
      * @return CSI reference signal received power, {@link CellInfo#UNAVAILABLE} means unreported
      * value.
      */
@@ -343,7 +326,7 @@ public final class CellSignalStrengthNr extends CellSignalStrength implements Pa
         mCsiRsrq = in.readInt();
         mCsiSinr = in.readInt();
         mCsiCqiTableIndex = in.readInt();
-        mCsiCqiReport = in.readArrayList(Integer.class.getClassLoader());
+        mCsiCqiReport = in.readArrayList(Integer.class.getClassLoader(), java.lang.Integer.class);
         mSsRsrp = in.readInt();
         mSsRsrq = in.readInt();
         mSsSinr = in.readInt();
@@ -455,13 +438,13 @@ public final class CellSignalStrengthNr extends CellSignalStrength implements Pa
         int level;
         if (measure == CellInfo.UNAVAILABLE) {
             level = SIGNAL_STRENGTH_NONE_OR_UNKNOWN;
-        } else if (measure > thresholds[3]) {
+        } else if (measure >= thresholds[3]) {
             level = SIGNAL_STRENGTH_GREAT;
-        } else if (measure > thresholds[2]) {
+        } else if (measure >= thresholds[2]) {
             level = SIGNAL_STRENGTH_GOOD;
-        } else if (measure > thresholds[1]) {
+        } else if (measure >= thresholds[1]) {
             level = SIGNAL_STRENGTH_MODERATE;
-        }  else if (measure > thresholds[0]) {
+        }  else if (measure >= thresholds[0]) {
             level = SIGNAL_STRENGTH_POOR;
         } else {
             level = SIGNAL_STRENGTH_NONE_OR_UNKNOWN;

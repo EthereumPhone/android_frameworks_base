@@ -28,6 +28,7 @@ import android.widget.FrameLayout;
 import android.widget.LinearLayout;
 import android.widget.SeekBar.OnSeekBarChangeListener;
 
+import androidx.annotation.Keep;
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
 
@@ -36,7 +37,7 @@ import com.android.systemui.Gefingerpoken;
 import com.android.systemui.R;
 
 /**
- * {@code FrameLayout} used to show and manipulate a {@link ToggleSeekBar}.
+ * {@code LinearLayout} used to show and manipulate a {@link ToggleSeekBar}.
  *
  */
 public class BrightnessSliderView extends LinearLayout {
@@ -185,6 +186,7 @@ public class BrightnessSliderView extends LinearLayout {
      *
      * Used in {@link com.android.systemui.qs.QSAnimator}.
      */
+    @Keep
     public void setSliderScaleY(float scale) {
         if (scale != mScale) {
             mScale = scale;
@@ -201,6 +203,7 @@ public class BrightnessSliderView extends LinearLayout {
         }
     }
 
+    @Keep
     public float getSliderScaleY() {
         return mScale;
     }

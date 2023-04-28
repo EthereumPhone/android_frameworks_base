@@ -44,16 +44,16 @@ public class UdfpsSurfaceView extends SurfaceView implements SurfaceHolder.Callb
     interface GhbmIlluminationListener {
         /**
          * @param surface the surface for which GHBM should be enabled.
-         * @param onIlluminatedRunnable a runnable that should be run after GHBM is enabled.
+         * @param onDisplayConfigured a runnable that should be run after GHBM is enabled.
          */
-        void enableGhbm(@NonNull Surface surface, @Nullable Runnable onIlluminatedRunnable);
+        void enableGhbm(@NonNull Surface surface, @Nullable Runnable onDisplayConfigured);
     }
 
     @NonNull private final SurfaceHolder mHolder;
     @NonNull private final Paint mSensorPaint;
 
     @Nullable private GhbmIlluminationListener mGhbmIlluminationListener;
-    @Nullable private Runnable mOnIlluminatedRunnable;
+    @Nullable private Runnable mOnDisplayConfigured;
     boolean mAwaitingSurfaceToStartIllumination;
     boolean mHasValidSurface;
 
@@ -83,8 +83,8 @@ public class UdfpsSurfaceView extends SurfaceView implements SurfaceHolder.Callb
     @Override public void surfaceCreated(SurfaceHolder holder) {
         mHasValidSurface = true;
         if (mAwaitingSurfaceToStartIllumination) {
-            doIlluminate(mOnIlluminatedRunnable);
-            mOnIlluminatedRunnable = null;
+            doIlluminate(mOnDisplayConfigured);
+            mOnDisplayConfigured = null;
             mAwaitingSurfaceToStartIllumination = false;
         }
     }
@@ -107,27 +107,27 @@ public class UdfpsSurfaceView extends SurfaceView implements SurfaceHolder.Callb
      * {@link UdfpsView} will hide this view, which would destroy the surface and remove the
      * illumination dot.
      */
-    void startGhbmIllumination(@Nullable Runnable onIlluminatedRunnable) {
+    void startGhbmIllumination(@Nullable Runnable onDisplayConfigured) {
         if (mGhbmIlluminationListener == null) {
             Log.e(TAG, "startIllumination | mGhbmIlluminationListener is null");
             return;
         }
 
         if (mHasValidSurface) {
-            doIlluminate(onIlluminatedRunnable);
+            doIlluminate(onDisplayConfigured);
         } else {
             mAwaitingSurfaceToStartIllumination = true;
-            mOnIlluminatedRunnable = onIlluminatedRunnable;
+            mOnDisplayConfigured = onDisplayConfigured;
         }
     }
 
-    private void doIlluminate(@Nullable Runnable onIlluminatedRunnable) {
+    private void doIlluminate(@Nullable Runnable onDisplayConfigured) {
         if (mGhbmIlluminationListener == null) {
             Log.e(TAG, "doIlluminate | mGhbmIlluminationListener is null");
             return;
         }
 
-        mGhbmIlluminationListener.enableGhbm(mHolder.getSurface(), onIlluminatedRunnable);
+        mGhbmIlluminationListener.enableGhbm(mHolder.getSurface(), onDisplayConfigured);
     }
 
     /**

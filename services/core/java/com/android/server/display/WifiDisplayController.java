@@ -697,20 +697,20 @@ final class WifiDisplayController implements DumpUtils.Dump {
             @Override
             public void onDisplayConnected(Surface surface,
                      int width, int height, int flags, int session) {
-                 if (mConnectedDevice == oldDevice && !mRemoteDisplayConnected) {
+                if (mConnectedDevice == oldDevice && !mRemoteDisplayConnected) {
                     Slog.i(TAG, "Opened RTSP connection with Wifi display: "
                             + mConnectedDevice.deviceName);
                     mRemoteDisplayConnected = true;
                     mHandler.removeCallbacks(mRtspTimeout);
 
-                 if (mWifiDisplayCertMode) {
-                     mListener.onDisplaySessionInfo(
-                     getSessionInfo(mConnectedDeviceGroupInfo, session));
-                 }
+                    if (mWifiDisplayCertMode) {
+                        mListener.onDisplaySessionInfo(
+                        getSessionInfo(mConnectedDeviceGroupInfo, session));
+                    }
 
-                 final WifiDisplay display = createWifiDisplay(mConnectedDevice);
-                 advertiseDisplay(display, surface, width, height, flags);
-                 }
+                    final WifiDisplay display = createWifiDisplay(mConnectedDevice);
+                    advertiseDisplay(display, surface, width, height, flags);
+                }
             }
 
             @Override
@@ -925,7 +925,7 @@ final class WifiDisplayController implements DumpUtils.Dump {
                     }
                 });
             }
-        } else {
+        } else if (!networkInfo.isConnectedOrConnecting()) {
             mConnectedDeviceGroupInfo = null;
 
             // Disconnect if we lost the network while connecting or connected to a display.

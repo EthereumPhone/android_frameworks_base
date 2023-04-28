@@ -16,17 +16,20 @@
 
 package com.android.systemui.controls.ui
 
+import android.test.suitebuilder.annotation.SmallTest
 import android.testing.AndroidTestingRunner
-import androidx.test.filters.SmallTest
 import com.android.systemui.SysuiTestCase
+import com.android.systemui.broadcast.BroadcastSender
 import com.android.systemui.controls.ControlsMetricsLogger
-import com.android.systemui.globalactions.GlobalActionsComponent
+import com.android.systemui.controls.settings.ControlsSettingsDialogManager
+import com.android.systemui.controls.settings.FakeControlsSettingsRepository
+import com.android.systemui.flags.FeatureFlags
+import com.android.systemui.flags.Flags
 import com.android.systemui.plugins.ActivityStarter
+import com.android.systemui.statusbar.VibratorHelper
 import com.android.systemui.statusbar.policy.KeyguardStateController
 import com.android.systemui.util.concurrency.DelayableExecutor
 import com.android.wm.shell.TaskViewFactory
-import dagger.Lazy
-import java.util.Optional
 import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -35,21 +38,20 @@ import org.mockito.Mock
 import org.mockito.Mockito
 import org.mockito.Mockito.`when`
 import org.mockito.Mockito.anyBoolean
+import org.mockito.Mockito.doNothing
 import org.mockito.Mockito.doReturn
 import org.mockito.Mockito.never
 import org.mockito.Mockito.reset
 import org.mockito.Mockito.spy
 import org.mockito.Mockito.verify
 import org.mockito.MockitoAnnotations
+import java.util.Optional
 
 @SmallTest
 @RunWith(AndroidTestingRunner::class)
 class ControlActionCoordinatorImplTest : SysuiTestCase() {
-
     @Mock
-    private lateinit var uiController: ControlsUiController
-    @Mock
-    private lateinit var lazyUiController: Lazy<ControlsUiController>
+    private lateinit var vibratorHelper: VibratorHelper
     @Mock
     private lateinit var keyguardStateController: KeyguardStateController
     @Mock
@@ -59,13 +61,17 @@ class ControlActionCoordinatorImplTest : SysuiTestCase() {
     @Mock
     private lateinit var activityStarter: ActivityStarter
     @Mock
-    private lateinit var globalActionsComponent: GlobalActionsComponent
+    private lateinit var broadcastSender: BroadcastSender
     @Mock
     private lateinit var taskViewFactory: Optional<TaskViewFactory>
     @Mock(answer = Answers.RETURNS_DEEP_STUBS)
     private lateinit var cvh: ControlViewHolder
     @Mock
     private lateinit var metricsLogger: ControlsMetricsLogger
+    @Mock
+    private lateinit var featureFlags: FeatureFlags
+    @Mock
+    private lateinit var controlsSettingsDialogManager: ControlsSettingsDialogManager
 
     companion object {
         fun <T> any(): T = Mockito.any<T>()
@@ -75,27 +81,38 @@ class ControlActionCoordinatorImplTest : SysuiTestCase() {
 
     private lateinit var coordinator: ControlActionCoordinatorImpl
     private lateinit var action: ControlActionCoordinatorImpl.Action
+    private lateinit var controlsSettingsRepository: FakeControlsSettingsRepository
 
     @Before
     fun setUp() {
         MockitoAnnotations.initMocks(this)
 
+        controlsSettingsRepository = FakeControlsSettingsRepository()
+        controlsSettingsRepository.setAllowActionOnTrivialControlsInLockscreen(true)
+        controlsSettingsRepository.setCanShowControlsInLockscreen(true)
+
         coordinator = spy(ControlActionCoordinatorImpl(
-            mContext,
-            bgExecutor,
-            uiExecutor,
-            activityStarter,
-            keyguardStateController,
-            globalActionsComponent,
-            taskViewFactory,
-            getFakeBroadcastDispatcher(),
-            lazyUiController,
-            metricsLogger
+                mContext,
+                bgExecutor,
+                uiExecutor,
+                activityStarter,
+                broadcastSender,
+                keyguardStateController,
+                taskViewFactory,
+                metricsLogger,
+                vibratorHelper,
+                controlsSettingsRepository,
+                controlsSettingsDialogManager,
+                featureFlags
         ))
+        coordinator.activityContext = mContext
 
         `when`(cvh.cws.ci.controlId).thenReturn(ID)
-        action = spy(coordinator.Action(ID, {}, false))
-        doReturn(action).`when`(coordinator).createAction(any(), any(), anyBoolean())
+        `when`(cvh.cws.control?.isAuthRequired()).thenReturn(true)
+        `when`(featureFlags.isEnabled(Flags.USE_APP_PANELS)).thenReturn(false)
+
+        action = spy(coordinator.Action(ID, {}, false, true))
+        doReturn(action).`when`(coordinator).createAction(any(), any(), anyBoolean(), anyBoolean())
     }
 
     @Test
@@ -126,5 +143,61 @@ class ControlActionCoordinatorImplTest : SysuiTestCase() {
         reset(action)
         coordinator.runPendingAction(ID)
         verify(action).invoke()
+    }
+
+    @Test
+    fun testToggleRunsWhenLockedAndAuthNotRequired() {
+        action = spy(coordinator.Action(ID, {}, false, false))
+        doReturn(action).`when`(coordinator).createAction(any(), any(), anyBoolean(), anyBoolean())
+
+        `when`(keyguardStateController.isShowing()).thenReturn(true)
+
+        coordinator.toggle(cvh, "", true)
+
+        verify(coordinator).bouncerOrRun(action)
+        verify(controlsSettingsDialogManager).maybeShowDialog(any(), any())
+        verify(action).invoke()
+    }
+
+    @Test
+    fun testToggleWhenLockedDoesNotTriggerDialog_featureFlagEnabled() {
+        `when`(featureFlags.isEnabled(Flags.USE_APP_PANELS)).thenReturn(true)
+        action = spy(coordinator.Action(ID, {}, false, false))
+        doReturn(action).`when`(coordinator).createAction(any(), any(), anyBoolean(), anyBoolean())
+
+        `when`(keyguardStateController.isShowing()).thenReturn(true)
+        `when`(keyguardStateController.isUnlocked()).thenReturn(false)
+        doNothing().`when`(controlsSettingsDialogManager).maybeShowDialog(any(), any())
+
+        coordinator.toggle(cvh, "", true)
+
+        verify(coordinator).bouncerOrRun(action)
+        verify(controlsSettingsDialogManager, never()).maybeShowDialog(any(), any())
+    }
+
+    @Test
+    fun testToggleDoesNotRunsWhenLockedAndAuthRequired() {
+        action = spy(coordinator.Action(ID, {}, false, true))
+        doReturn(action).`when`(coordinator).createAction(any(), any(), anyBoolean(), anyBoolean())
+
+        `when`(keyguardStateController.isShowing()).thenReturn(true)
+        `when`(keyguardStateController.isUnlocked()).thenReturn(false)
+
+        coordinator.toggle(cvh, "", true)
+
+        verify(coordinator).bouncerOrRun(action)
+        verify(action, never()).invoke()
+    }
+
+    @Test
+    fun testNullControl() {
+        `when`(cvh.cws.control).thenReturn(null)
+
+        `when`(keyguardStateController.isShowing()).thenReturn(true)
+
+        coordinator.toggle(cvh, "", true)
+
+        verify(coordinator).bouncerOrRun(action)
+        verify(action, never()).invoke()
     }
 }

@@ -17,9 +17,11 @@
 package android.app;
 
 import android.annotation.Nullable;
+import android.annotation.RequiresPermission;
 import android.content.ComponentName;
 import android.content.Intent;
 import android.content.res.Configuration;
+import android.content.res.Resources;
 import android.os.Bundle;
 import android.os.IBinder;
 import android.os.PersistableBundle;
@@ -51,6 +53,15 @@ public class ActivityClient {
     public void activityResumed(IBinder token, boolean handleSplashScreenExit) {
         try {
             getActivityClientController().activityResumed(token, handleSplashScreenExit);
+        } catch (RemoteException e) {
+            e.rethrowFromSystemServer();
+        }
+    }
+
+    /** Reports {@link android.app.servertransaction.RefreshCallbackItem} is executed. */
+    public void activityRefreshed(IBinder token) {
+        try {
+            getActivityClientController().activityRefreshed(token);
         } catch (RemoteException e) {
             e.rethrowFromSystemServer();
         }
@@ -97,6 +108,15 @@ public class ActivityClient {
         }
     }
 
+    /** Reports the activity starts local relaunch. */
+    public void activityLocalRelaunch(IBinder token) {
+        try {
+            getActivityClientController().activityLocalRelaunch(token);
+        } catch (RemoteException e) {
+            e.rethrowFromSystemServer();
+        }
+    }
+
     /** Reports the activity has completed relaunched. */
     public void activityRelaunched(IBinder token) {
         try {
@@ -130,11 +150,11 @@ public class ActivityClient {
         }
     }
 
-    boolean navigateUpTo(IBinder token, Intent destIntent, int resultCode,
+    boolean navigateUpTo(IBinder token, Intent destIntent, String resolvedType, int resultCode,
             Intent resultData) {
         try {
-            return getActivityClientController().navigateUpTo(token, destIntent, resultCode,
-                    resultData);
+            return getActivityClientController().navigateUpTo(token, destIntent, resolvedType,
+                    resultCode, resultData);
         } catch (RemoteException e) {
             throw e.rethrowFromSystemServer();
         }
@@ -174,6 +194,15 @@ public class ActivityClient {
         }
     }
 
+    @RequiresPermission(android.Manifest.permission.MANAGE_MEDIA_PROJECTION)
+    void setForceSendResultForMediaProjection(IBinder token) {
+        try {
+            getActivityClientController().setForceSendResultForMediaProjection(token);
+        } catch (RemoteException e) {
+            throw e.rethrowFromSystemServer();
+        }
+    }
+
     public boolean isTopOfTask(IBinder token) {
         try {
             return getActivityClientController().isTopOfTask(token);
@@ -201,6 +230,19 @@ public class ActivityClient {
     public int getTaskForActivity(IBinder token, boolean onlyRoot) {
         try {
             return getActivityClientController().getTaskForActivity(token, onlyRoot);
+        } catch (RemoteException e) {
+            throw e.rethrowFromSystemServer();
+        }
+    }
+
+    /**
+     * Returns the {@link Configuration} of the task which hosts the Activity, or {@code null} if
+     * the task {@link Configuration} cannot be obtained.
+     */
+    @Nullable
+    public Configuration getTaskConfiguration(IBinder activityToken) {
+        try {
+            return getActivityClientController().getTaskConfiguration(activityToken);
         } catch (RemoteException e) {
             throw e.rethrowFromSystemServer();
         }
@@ -323,6 +365,14 @@ public class ActivityClient {
         }
     }
 
+    void setShouldDockBigOverlays(IBinder token, boolean shouldDockBigOverlays) {
+        try {
+            getActivityClientController().setShouldDockBigOverlays(token, shouldDockBigOverlays);
+        } catch (RemoteException e) {
+            e.rethrowFromSystemServer();
+        }
+    }
+
     void toggleFreeformWindowingMode(IBinder token) {
         try {
             getActivityClientController().toggleFreeformWindowingMode(token);
@@ -427,25 +477,31 @@ public class ActivityClient {
         }
     }
 
-    void overridePendingTransition(IBinder token, String packageName,
-            int enterAnim, int exitAnim) {
+    void overridePendingTransition(IBinder token, String packageName, int enterAnim, int exitAnim,
+            int backgroundColor) {
         try {
             getActivityClientController().overridePendingTransition(token, packageName,
-                    enterAnim, exitAnim);
+                    enterAnim, exitAnim, backgroundColor);
         } catch (RemoteException e) {
             e.rethrowFromSystemServer();
         }
     }
 
-    void setDisablePreviewScreenshots(IBinder token, boolean disable) {
+    void setRecentsScreenshotEnabled(IBinder token, boolean enabled) {
         try {
-            getActivityClientController().setDisablePreviewScreenshots(token, disable);
+            getActivityClientController().setRecentsScreenshotEnabled(token, enabled);
         } catch (RemoteException e) {
             e.rethrowFromSystemServer();
         }
     }
 
-    /** Removes the snapshot of home task. */
+    /**
+     * Removes the outdated snapshot of the home task.
+     *
+     * @param homeToken The token of the home task, or null if you have the
+     *                  {@link android.Manifest.permission#MANAGE_ACTIVITY_TASKS} permission and
+     *                  want us to find the home task token for you.
+     */
     public void invalidateHomeTaskSnapshot(IBinder homeToken) {
         try {
             getActivityClientController().invalidateHomeTaskSnapshot(homeToken);
@@ -479,9 +535,9 @@ public class ActivityClient {
         }
     }
 
-    void onBackPressedOnTaskRoot(IBinder token, IRequestFinishCallback callback) {
+    void onBackPressed(IBinder token, IRequestFinishCallback callback) {
         try {
-            getActivityClientController().onBackPressedOnTaskRoot(token, callback);
+            getActivityClientController().onBackPressed(token, callback);
         } catch (RemoteException e) {
             e.rethrowFromSystemServer();
         }
@@ -493,6 +549,28 @@ public class ActivityClient {
     void reportSplashScreenAttached(IBinder token) {
         try {
             getActivityClientController().splashScreenAttached(token);
+        } catch (RemoteException e) {
+            e.rethrowFromSystemServer();
+        }
+    }
+
+    /**
+     * Shows or hides a Camera app compat toggle for stretched issues with the requested state.
+     *
+     * @param token The token for the window that needs a control.
+     * @param showControl Whether the control should be shown or hidden.
+     * @param transformationApplied Whether the treatment is already applied.
+     * @param callback The callback executed when the user clicks on a control.
+     */
+    void requestCompatCameraControl(Resources res, IBinder token, boolean showControl,
+            boolean transformationApplied, ICompatCameraControlCallback callback) {
+        if (!res.getBoolean(com.android.internal.R.bool
+                .config_isCameraCompatControlForStretchedIssuesEnabled)) {
+            return;
+        }
+        try {
+            getActivityClientController().requestCompatCameraControl(
+                    token, showControl, transformationApplied, callback);
         } catch (RemoteException e) {
             e.rethrowFromSystemServer();
         }

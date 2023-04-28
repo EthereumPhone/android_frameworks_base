@@ -241,24 +241,24 @@ public final class DataCallResponse implements Parcelable {
         mProtocolType = source.readInt();
         mInterfaceName = source.readString();
         mAddresses = new ArrayList<>();
-        source.readList(mAddresses, LinkAddress.class.getClassLoader());
+        source.readList(mAddresses, LinkAddress.class.getClassLoader(), android.net.LinkAddress.class);
         mDnsAddresses = new ArrayList<>();
-        source.readList(mDnsAddresses, InetAddress.class.getClassLoader());
+        source.readList(mDnsAddresses, InetAddress.class.getClassLoader(), java.net.InetAddress.class);
         mGatewayAddresses = new ArrayList<>();
-        source.readList(mGatewayAddresses, InetAddress.class.getClassLoader());
+        source.readList(mGatewayAddresses, InetAddress.class.getClassLoader(), java.net.InetAddress.class);
         mPcscfAddresses = new ArrayList<>();
-        source.readList(mPcscfAddresses, InetAddress.class.getClassLoader());
+        source.readList(mPcscfAddresses, InetAddress.class.getClassLoader(), java.net.InetAddress.class);
         mMtu = source.readInt();
         mMtuV4 = source.readInt();
         mMtuV6 = source.readInt();
         mHandoverFailureMode = source.readInt();
         mPduSessionId = source.readInt();
-        mDefaultQos = source.readParcelable(Qos.class.getClassLoader());
+        mDefaultQos = source.readParcelable(Qos.class.getClassLoader(), android.telephony.data.Qos.class);
         mQosBearerSessions = new ArrayList<>();
-        source.readList(mQosBearerSessions, QosBearerSession.class.getClassLoader());
-        mSliceInfo = source.readParcelable(NetworkSliceInfo.class.getClassLoader());
+        source.readList(mQosBearerSessions, QosBearerSession.class.getClassLoader(), android.telephony.data.QosBearerSession.class);
+        mSliceInfo = source.readParcelable(NetworkSliceInfo.class.getClassLoader(), android.telephony.data.NetworkSliceInfo.class);
         mTrafficDescriptors = new ArrayList<>();
-        source.readList(mTrafficDescriptors, TrafficDescriptor.class.getClassLoader());
+        source.readList(mTrafficDescriptors, TrafficDescriptor.class.getClassLoader(), android.telephony.data.TrafficDescriptor.class);
     }
 
     /**
@@ -428,7 +428,7 @@ public final class DataCallResponse implements Parcelable {
     public String toString() {
         StringBuffer sb = new StringBuffer();
         sb.append("DataCallResponse: {")
-           .append(" cause=").append(mCause)
+           .append(" cause=").append(DataFailCause.toString(mCause))
            .append(" retry=").append(mSuggestedRetryTime)
            .append(" cid=").append(mId)
            .append(" linkStatus=").append(mLinkStatus)
@@ -468,14 +468,14 @@ public final class DataCallResponse implements Parcelable {
         final boolean isQosBearerSessionsSame =
                 (mQosBearerSessions == null || other.mQosBearerSessions == null)
                 ? mQosBearerSessions == other.mQosBearerSessions
-                : mQosBearerSessions.size() == other.mQosBearerSessions.size()
-                && mQosBearerSessions.containsAll(other.mQosBearerSessions);
+                : (mQosBearerSessions.size() == other.mQosBearerSessions.size()
+                        && mQosBearerSessions.containsAll(other.mQosBearerSessions));
 
         final boolean isTrafficDescriptorsSame =
                 (mTrafficDescriptors == null || other.mTrafficDescriptors == null)
                 ? mTrafficDescriptors == other.mTrafficDescriptors
-                : mTrafficDescriptors.size() == other.mTrafficDescriptors.size()
-                && mTrafficDescriptors.containsAll(other.mTrafficDescriptors);
+                : (mTrafficDescriptors.size() == other.mTrafficDescriptors.size()
+                        && mTrafficDescriptors.containsAll(other.mTrafficDescriptors));
 
         return mCause == other.mCause
                 && mSuggestedRetryTime == other.mSuggestedRetryTime
@@ -504,10 +504,35 @@ public final class DataCallResponse implements Parcelable {
 
     @Override
     public int hashCode() {
+        // Generate order-independent hashes for lists
+        int addressesHash = mAddresses.stream()
+                .map(LinkAddress::hashCode)
+                .mapToInt(Integer::intValue)
+                .sum();
+        int dnsAddressesHash = mDnsAddresses.stream()
+                .map(InetAddress::hashCode)
+                .mapToInt(Integer::intValue)
+                .sum();
+        int gatewayAddressesHash = mGatewayAddresses.stream()
+                .map(InetAddress::hashCode)
+                .mapToInt(Integer::intValue)
+                .sum();
+        int pcscfAddressesHash = mPcscfAddresses.stream()
+                .map(InetAddress::hashCode)
+                .mapToInt(Integer::intValue)
+                .sum();
+        int qosBearerSessionsHash = mQosBearerSessions.stream()
+                .map(QosBearerSession::hashCode)
+                .mapToInt(Integer::intValue)
+                .sum();
+        int trafficDescriptorsHash = mTrafficDescriptors.stream()
+                .map(TrafficDescriptor::hashCode)
+                .mapToInt(Integer::intValue)
+                .sum();
         return Objects.hash(mCause, mSuggestedRetryTime, mId, mLinkStatus, mProtocolType,
-                mInterfaceName, mAddresses, mDnsAddresses, mGatewayAddresses, mPcscfAddresses,
-                mMtu, mMtuV4, mMtuV6, mHandoverFailureMode, mPduSessionId, mDefaultQos,
-                mQosBearerSessions, mSliceInfo, mTrafficDescriptors);
+                mInterfaceName, addressesHash, dnsAddressesHash, gatewayAddressesHash,
+                pcscfAddressesHash, mMtu, mMtuV4, mMtuV6, mHandoverFailureMode, mPduSessionId,
+                mDefaultQos, qosBearerSessionsHash, mSliceInfo, trafficDescriptorsHash);
     }
 
     @Override
@@ -816,8 +841,8 @@ public final class DataCallResponse implements Parcelable {
         /**
          * Set pdu session id.
          * <p/>
-         * The id must be between 1 and 15 when linked to a pdu session.  If no pdu session
-         * exists for the current data call, the id must be set to {@link PDU_SESSION_ID_NOT_SET}.
+         * The id must be between 1 and 15 when linked to a pdu session. If no pdu session
+         * exists for the current data call, the id must be set to {@link #PDU_SESSION_ID_NOT_SET}.
          *
          * @param pduSessionId Pdu Session Id of the data call.
          * @return The same instance of the builder.
@@ -858,6 +883,7 @@ public final class DataCallResponse implements Parcelable {
          */
         public @NonNull Builder setQosBearerSessions(
                 @NonNull List<QosBearerSession> qosBearerSessions) {
+            Objects.requireNonNull(qosBearerSessions);
             mQosBearerSessions = qosBearerSessions;
             return this;
         }
@@ -891,6 +917,7 @@ public final class DataCallResponse implements Parcelable {
          */
         public @NonNull Builder setTrafficDescriptors(
                 @NonNull List<TrafficDescriptor> trafficDescriptors) {
+            Objects.requireNonNull(trafficDescriptors);
             mTrafficDescriptors = trafficDescriptors;
             return this;
         }

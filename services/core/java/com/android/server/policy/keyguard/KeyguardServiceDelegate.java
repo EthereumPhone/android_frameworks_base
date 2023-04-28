@@ -202,6 +202,9 @@ public class KeyguardServiceDelegate {
             if (!mKeyguardState.enabled) {
                 mKeyguardService.setKeyguardEnabled(mKeyguardState.enabled);
             }
+            if (mKeyguardState.dreaming) {
+                mKeyguardService.onDreamingStarted();
+            }
         }
 
         @Override
@@ -412,6 +415,17 @@ public class KeyguardServiceDelegate {
     public void onShortPowerPressedGoHome() {
         if (mKeyguardService != null) {
             mKeyguardService.onShortPowerPressedGoHome();
+        }
+    }
+
+    public void dismissKeyguardToLaunch(Intent intentToLaunch) {
+        if (mKeyguardService != null) {
+            mKeyguardService.dismissKeyguardToLaunch(intentToLaunch);
+        }
+    }
+    public void onSystemKeyPressed(int keycode) {
+        if (mKeyguardService != null) {
+            mKeyguardService.onSystemKeyPressed(keycode);
         }
     }
 

@@ -27,7 +27,6 @@ import android.content.res.CompatibilityInfo;
 import android.content.res.Configuration;
 import android.os.IBinder;
 import android.util.MergedConfiguration;
-import android.view.DisplayAdjustments.FixedRotationAdjustments;
 import android.view.SurfaceControl;
 import android.window.SplashScreenView.SplashScreenViewParcelable;
 
@@ -83,6 +82,9 @@ public abstract class ClientTransactionHandler {
     /** Set current process state. */
     public abstract void updateProcessState(int processState, boolean fromIpc);
 
+    /** Count how many activities are launching. */
+    public abstract void countLaunchingActivities(int num);
+
     // Execute phase related logic and handlers. Methods here execute actual lifecycle transactions
     // and deliver callbacks.
 
@@ -95,8 +97,8 @@ public abstract class ClientTransactionHandler {
 
     /** Pause the activity. */
     public abstract void handlePauseActivity(@NonNull ActivityClientRecord r, boolean finished,
-            boolean userLeaving, int configChanges, PendingTransactionActions pendingActions,
-            String reason);
+            boolean userLeaving, int configChanges, boolean autoEnteringPip,
+            PendingTransactionActions pendingActions, String reason);
 
     /**
      * Resume the activity.
@@ -107,7 +109,8 @@ public abstract class ClientTransactionHandler {
      * @param reason Reason for performing this operation.
      */
     public abstract void handleResumeActivity(@NonNull ActivityClientRecord r,
-            boolean finalStateRequest, boolean isForward, String reason);
+            boolean finalStateRequest, boolean isForward, boolean shouldSendCompatFakeFocus,
+            String reason);
 
     /**
      * Notify the activity about top resumed state change.
@@ -138,8 +141,11 @@ public abstract class ClientTransactionHandler {
     /** Restart the activity after it was stopped. */
     public abstract void performRestartActivity(@NonNull ActivityClientRecord r, boolean start);
 
+     /** Report that activity was refreshed to server. */
+    public abstract void reportRefresh(@NonNull ActivityClientRecord r);
+
     /** Set pending activity configuration in case it will be updated by other transaction item. */
-    public abstract void updatePendingActivityConfiguration(@NonNull ActivityClientRecord r,
+    public abstract void updatePendingActivityConfiguration(@NonNull IBinder token,
             Configuration overrideConfig);
 
     /** Deliver activity (override) configuration change. */
@@ -183,30 +189,6 @@ public abstract class ClientTransactionHandler {
 
     /** Deliver app configuration change notification. */
     public abstract void handleConfigurationChanged(Configuration config);
-
-    /** Apply addition adjustments to override display information. */
-    public abstract void handleFixedRotationAdjustments(IBinder token,
-            FixedRotationAdjustments fixedRotationAdjustments);
-
-    /**
-     * Add {@link ActivityClientRecord} that is preparing to be launched.
-     * @param token Activity token.
-     * @param activity An initialized instance of {@link ActivityClientRecord} to use during launch.
-     */
-    public abstract void addLaunchingActivity(IBinder token, ActivityClientRecord activity);
-
-    /**
-     * Get {@link ActivityClientRecord} that is preparing to be launched.
-     * @param token Activity token.
-     * @return An initialized instance of {@link ActivityClientRecord} to use during launch.
-     */
-    public abstract ActivityClientRecord getLaunchingActivity(IBinder token);
-
-    /**
-     * Remove {@link ActivityClientRecord} from the launching activity list.
-     * @param token Activity token.
-     */
-    public abstract void removeLaunchingActivity(IBinder token);
 
     /**
      * Get {@link android.app.ActivityThread.ActivityClientRecord} instance that corresponds to the

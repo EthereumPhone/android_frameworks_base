@@ -31,7 +31,18 @@ public interface DozeHost {
     boolean isPowerSaveActive();
     boolean isPulsingBlocked();
     boolean isProvisioned();
-    boolean isBlockingDoze();
+
+    /**
+     * Whether there's a pulse that's been requested but hasn't started transitioning to pulsing
+     * states yet.
+     */
+    boolean isPulsePending();
+
+    /**
+     * @param isPulsePending whether a pulse has been requested but hasn't started transitioning
+     *                       to the pulse state yet
+     */
+    void setPulsePending(boolean isPulsePending);
 
     /**
      * Makes a current pulse last for twice as long.
@@ -80,8 +91,9 @@ public interface DozeHost {
      */
     void stopPulsing();
 
-    /** Returns whether doze is suppressed. */
-    boolean isDozeSuppressed();
+    /** Returns whether always-on-display is suppressed. This does not include suppressing
+     * wake-up gestures. */
+    boolean isAlwaysOnSuppressed();
 
     interface Callback {
         /**
@@ -97,8 +109,15 @@ public interface DozeHost {
          */
         default void onPowerSaveChanged(boolean active) {}
 
-        /** Called when the doze suppression state changes. */
-        default void onDozeSuppressedChanged(boolean suppressed) {}
+        /**
+         * Called when the always on suppression state changes. See {@link #isAlwaysOnSuppressed()}.
+         */
+        default void onAlwaysOnSuppressedChanged(boolean suppressed) {}
+
+        /**
+         * Called when the dozing state may have been updated.
+         */
+        default void onDozingChanged(boolean isDozing) {}
     }
 
     interface PulseCallback {

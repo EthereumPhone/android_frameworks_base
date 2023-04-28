@@ -125,6 +125,12 @@ public final class DataFailCause {
     public static final int UNSUPPORTED_QCI_VALUE = 0x3B;
     /** Procedure requested by the UE was rejected because the bearer handling is not supported. */
     public static final int BEARER_HANDLING_NOT_SUPPORTED = 0x3C;
+    /**
+     * This cause is used to report a service or option not available event only when no other
+     * cause in the service or option not available class applies.
+     * @hide // TODO: Unhide in U.
+     */
+    public static final int SERVICE_OR_OPTION_NOT_AVAILABLE = 0x3F;
     /** Max number of Packet Data Protocol (PDP) context reached. */
     public static final int ACTIVE_PDP_CONTEXT_MAX_NUMBER_REACHED = 0x41;
     /** Unsupported APN in current public land mobile network (PLMN). */
@@ -981,8 +987,17 @@ public final class DataFailCause {
     /** The ePDG does not support un-authenticated IMSI based emergency PDN bringup **/
     public static final int IWLAN_UNAUTHENTICATED_EMERGENCY_NOT_SUPPORTED = 0x2B2F;
 
-    // Device is unable to establish an IPSec tunnel with the ePDG for any reason
-    // e.g authentication fail or certificate validation or DNS Resolution and timeout failure.
+    // The below error causes are relevant when the device is unable to establish an IPSec tunnel
+    // with the ePDG for any reason, e.g. authentication fail or certificate validation or DNS
+    // Resolution and timeout failure.
+
+    /**
+     * The requested service was rejected because of congestion in the network while accessing the
+     * IWLAN ePDG. Defined in 3GPP TS 24.502, Section 9.2.4.2.
+     *
+     * @hide
+     */
+    public static final int IWLAN_CONGESTION = 0x3C8C;
 
     /** IKE configuration error resulting in failure  */
     public static final int IWLAN_IKEV2_CONFIG_FAILURE = 0x4000;
@@ -1076,6 +1091,20 @@ public final class DataFailCause {
      */
     public static final int SERVICE_TEMPORARILY_UNAVAILABLE = 0x10009;
 
+    /**
+     * The request is not supported by the vendor.
+     *
+     * @hide
+     */
+    public static final int REQUEST_NOT_SUPPORTED = 0x1000A;
+
+    /**
+     * An internal setup data error initiated by telephony that no retry should be performed.
+     *
+     * @hide
+     */
+    public static final int NO_RETRY_FAILURE = 0x1000B;
+
     private static final Map<Integer, String> sFailCauseMap;
     static {
         sFailCauseMap = new HashMap<>();
@@ -1121,6 +1150,7 @@ public final class DataFailCause {
         sFailCauseMap.put(ONLY_NON_IP_ALLOWED, "ONLY_NON_IP_ALLOWED");
         sFailCauseMap.put(UNSUPPORTED_QCI_VALUE, "UNSUPPORTED_QCI_VALUE");
         sFailCauseMap.put(BEARER_HANDLING_NOT_SUPPORTED, "BEARER_HANDLING_NOT_SUPPORTED");
+        sFailCauseMap.put(SERVICE_OR_OPTION_NOT_AVAILABLE, "SERVICE_OR_OPTION_NOT_AVAILABLE");
         sFailCauseMap.put(ACTIVE_PDP_CONTEXT_MAX_NUMBER_REACHED,
                 "ACTIVE_PDP_CONTEXT_MAX_NUMBER_REACHED");
         sFailCauseMap.put(UNSUPPORTED_APN_IN_CURRENT_PLMN,
@@ -1508,6 +1538,8 @@ public final class DataFailCause {
         sFailCauseMap.put(DUPLICATE_CID, "DUPLICATE_CID");
         sFailCauseMap.put(NO_DEFAULT_DATA, "NO_DEFAULT_DATA");
         sFailCauseMap.put(SERVICE_TEMPORARILY_UNAVAILABLE, "SERVICE_TEMPORARILY_UNAVAILABLE");
+        sFailCauseMap.put(REQUEST_NOT_SUPPORTED, "REQUEST_NOT_SUPPORTED");
+        sFailCauseMap.put(NO_RETRY_FAILURE, "NO_RETRY_FAILURE");
     }
 
     private DataFailCause() {
@@ -1558,6 +1590,7 @@ public final class DataFailCause {
     }
 
     /** @hide */
+    // TODO: Migrated to DataConfigManager
     public static boolean isPermanentFailure(@NonNull Context context,
                                              @DataFailureCause int failCause,
                                              int subId) {
@@ -1614,6 +1647,7 @@ public final class DataFailCause {
                     };
                 }
 
+                permanentFailureSet.add(NO_RETRY_FAILURE);
                 sPermanentFailureCache.put(subId, permanentFailureSet);
             }
 
@@ -1643,8 +1677,8 @@ public final class DataFailCause {
 
     /** @hide */
     public static String toString(@DataFailureCause int dataFailCause) {
-        int cause = getFailCause(dataFailCause);
-        return (cause == UNKNOWN) ? "UNKNOWN(" + dataFailCause + ")" : sFailCauseMap.get(cause);
+        return sFailCauseMap.getOrDefault(dataFailCause, "UNKNOWN") + "(0x"
+                + Integer.toHexString(dataFailCause) + ")";
     }
 
     /** @hide */
@@ -1654,5 +1688,10 @@ public final class DataFailCause {
         } else {
             return UNKNOWN;
         }
+    }
+
+    /** @hide */
+    public static boolean isFailCauseExisting(@DataFailureCause int failCause) {
+        return sFailCauseMap.containsKey(failCause);
     }
 }

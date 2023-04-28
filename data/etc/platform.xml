@@ -120,6 +120,10 @@
         <group gid="reserved_disk" />
     </permission>
 
+    <permission name="android.permission.WRITE_SECURITY_LOG">
+        <group gid="security_log_writer" />
+    </permission>
+
     <!-- These are permissions that were mapped to gids but we need
          to keep them here until an upgrade from L to the current
          version is to be supported. These permissions are built-in
@@ -167,10 +171,11 @@
     <assign-permission name="android.permission.UPDATE_DEVICE_STATS" uid="audioserver" />
     <assign-permission name="android.permission.UPDATE_APP_OPS_STATS" uid="audioserver" />
     <assign-permission name="android.permission.PACKAGE_USAGE_STATS" uid="audioserver" />
-    <assign-permission name="android.permission.INTERACT_ACROSS_USERS" uid="audioserver" />
+    <assign-permission name="android.permission.INTERACT_ACROSS_USERS_FULL" uid="audioserver" />
     <assign-permission name="android.permission.OBSERVE_SENSOR_PRIVACY" uid="audioserver" />
 
     <assign-permission name="android.permission.MODIFY_AUDIO_SETTINGS" uid="cameraserver" />
+    <assign-permission name="android.permission.INTERACT_ACROSS_USERS_FULL" uid="cameraserver" />
     <assign-permission name="android.permission.ACCESS_SURFACE_FLINGER" uid="cameraserver" />
     <assign-permission name="android.permission.WAKE_LOCK" uid="cameraserver" />
     <assign-permission name="android.permission.UPDATE_DEVICE_STATS" uid="cameraserver" />
@@ -227,6 +232,10 @@
                       targetSdk="29">
         <new-permission name="android.permission.ACCESS_MEDIA_LOCATION" />
     </split-permission>
+    <split-permission name="android.permission.WRITE_EXTERNAL_STORAGE"
+                      targetSdk="29">
+        <new-permission name="android.permission.ACCESS_MEDIA_LOCATION" />
+    </split-permission>
     <split-permission name="android.permission.BLUETOOTH"
                       targetSdk="31">
         <new-permission name="android.permission.BLUETOOTH_SCAN" />
@@ -250,6 +259,34 @@
     <split-permission name="android.permission.BLUETOOTH_ADMIN"
                       targetSdk="31">
         <new-permission name="android.permission.BLUETOOTH_ADVERTISE" />
+    </split-permission>
+    <split-permission name="android.permission.BODY_SENSORS"
+                      targetSdk="33">
+        <new-permission name="android.permission.BODY_SENSORS_BACKGROUND" />
+    </split-permission>
+    <split-permission name="android.permission.READ_EXTERNAL_STORAGE"
+                      targetSdk="33">
+        <new-permission name="android.permission.READ_MEDIA_AUDIO" />
+    </split-permission>
+    <split-permission name="android.permission.READ_EXTERNAL_STORAGE"
+                      targetSdk="33">
+        <new-permission name="android.permission.READ_MEDIA_VIDEO" />
+    </split-permission>
+    <split-permission name="android.permission.READ_EXTERNAL_STORAGE"
+                      targetSdk="33">
+        <new-permission name="android.permission.READ_MEDIA_IMAGES" />
+    </split-permission>
+    <split-permission name="android.permission.WRITE_EXTERNAL_STORAGE"
+                      targetSdk="33">
+        <new-permission name="android.permission.READ_MEDIA_AUDIO" />
+    </split-permission>
+    <split-permission name="android.permission.WRITE_EXTERNAL_STORAGE"
+                      targetSdk="33">
+        <new-permission name="android.permission.READ_MEDIA_VIDEO" />
+    </split-permission>
+    <split-permission name="android.permission.WRITE_EXTERNAL_STORAGE"
+                      targetSdk="33">
+        <new-permission name="android.permission.READ_MEDIA_IMAGES" />
     </split-permission>
 
     <!-- This is a list of all the libraries available for application

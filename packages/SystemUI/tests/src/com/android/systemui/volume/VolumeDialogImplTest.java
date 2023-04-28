@@ -38,9 +38,11 @@ import android.view.accessibility.AccessibilityManager;
 
 import androidx.test.filters.SmallTest;
 
+import com.android.internal.jank.InteractionJankMonitor;
 import com.android.systemui.Prefs;
 import com.android.systemui.R;
 import com.android.systemui.SysuiTestCase;
+import com.android.systemui.dump.DumpManager;
 import com.android.systemui.media.dialog.MediaOutputDialogFactory;
 import com.android.systemui.plugins.ActivityStarter;
 import com.android.systemui.plugins.VolumeDialogController;
@@ -48,6 +50,7 @@ import com.android.systemui.plugins.VolumeDialogController.State;
 import com.android.systemui.statusbar.policy.AccessibilityManagerWrapper;
 import com.android.systemui.statusbar.policy.ConfigurationController;
 import com.android.systemui.statusbar.policy.DeviceProvisionedController;
+import com.android.systemui.tuner.TunerService;
 
 import org.junit.Before;
 import org.junit.Test;
@@ -83,6 +86,8 @@ public class VolumeDialogImplTest extends SysuiTestCase {
     ConfigurationController mConfigurationController;
     @Mock
     MediaOutputDialogFactory mMediaOutputDialogFactory;
+    @Mock
+    VolumePanelFactory mVolumePanelFactory;
     @Mock
     ActivityStarter mActivityStarter;
     @Mock

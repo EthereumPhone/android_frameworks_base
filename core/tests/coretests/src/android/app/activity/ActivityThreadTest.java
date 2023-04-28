@@ -31,7 +31,6 @@ import static org.junit.Assert.assertTrue;
 
 import android.annotation.Nullable;
 import android.app.Activity;
-import android.app.ActivityManager;
 import android.app.ActivityThread;
 import android.app.ActivityThread.ActivityClientRecord;
 import android.app.IApplicationThread;
@@ -105,6 +104,11 @@ public class ActivityThreadTest {
             mCreatedVirtualDisplays.forEach(VirtualDisplay::release);
             mCreatedVirtualDisplays = null;
         }
+    }
+
+    @Test
+    public void testTemporaryDirectory() throws Exception {
+        assertEquals(System.getProperty("java.io.tmpdir"), System.getenv("TMPDIR"));
     }
 
     @Test
@@ -268,13 +272,14 @@ public class ActivityThreadTest {
             newerConfig.orientation = orientation == ORIENTATION_LANDSCAPE
                     ? ORIENTATION_PORTRAIT : ORIENTATION_LANDSCAPE;
             newerConfig.seq = seq + 2;
-            final ActivityClientRecord r = getActivityClientRecord(activity);
-            activityThread.updatePendingActivityConfiguration(r, newerConfig);
+            activityThread.updatePendingActivityConfiguration(activity.getActivityToken(),
+                    newerConfig);
 
             final Configuration olderConfig = new Configuration();
             olderConfig.orientation = orientation;
             olderConfig.seq = seq + 1;
 
+            final ActivityClientRecord r = getActivityClientRecord(activity);
             activityThread.handleActivityConfigurationChanged(r, olderConfig, INVALID_DISPLAY);
             assertEquals(numOfConfig, activity.mNumOfConfigChanges);
             assertEquals(olderConfig.orientation, activity.mConfig.orientation);
@@ -499,7 +504,8 @@ public class ActivityThreadTest {
                     ? ORIENTATION_LANDSCAPE : ORIENTATION_PORTRAIT;
 
             final ActivityClientRecord r = getActivityClientRecord(activity);
-            activityThread.updatePendingActivityConfiguration(r, newActivityConfig);
+            activityThread.updatePendingActivityConfiguration(activity.getActivityToken(),
+                    newActivityConfig);
             activityThread.handleActivityConfigurationChanged(r, newActivityConfig,
                     INVALID_DISPLAY);
 
@@ -561,53 +567,6 @@ public class ActivityThreadTest {
             assertNotEquals("Application display size must be updated after config update",
                     newActivityMetrics, newApplicationMetrics);
         });
-    }
-
-    @Test
-    public void testHandleProcessConfigurationChanged_DependOnProcessState() {
-        final ActivityThread activityThread = ActivityThread.currentActivityThread();
-        final Configuration origConfig = activityThread.getConfiguration();
-        final int newDpi = origConfig.densityDpi + 10;
-        final Configuration newConfig = new Configuration(origConfig);
-        newConfig.seq++;
-        newConfig.densityDpi = newDpi;
-
-        activityThread.updateProcessState(ActivityManager.PROCESS_STATE_CACHED_ACTIVITY,
-                false /* fromIPC */);
-
-        applyProcessConfiguration(activityThread, newConfig);
-        try {
-            // In the cached state, the configuration is only set as pending and not applied.
-            assertEquals(origConfig.densityDpi, activityThread.getConfiguration().densityDpi);
-            assertTrue(activityThread.isCachedProcessState());
-        } finally {
-            // The foreground state is the default state of instrumentation.
-            activityThread.updateProcessState(ActivityManager.PROCESS_STATE_FOREGROUND_SERVICE,
-                    false /* fromIPC */);
-        }
-        InstrumentationRegistry.getInstrumentation().waitForIdleSync();
-
-        try {
-            // The state becomes non-cached, the pending configuration should be applied.
-            assertEquals(newConfig.densityDpi, activityThread.getConfiguration().densityDpi);
-            assertFalse(activityThread.isCachedProcessState());
-        } finally {
-            // Restore to the original configuration.
-            activityThread.getConfiguration().seq = origConfig.seq - 1;
-            applyProcessConfiguration(activityThread, origConfig);
-        }
-    }
-
-    private static void applyProcessConfiguration(ActivityThread thread, Configuration config) {
-        final ClientTransaction clientTransaction = newTransaction(thread,
-                null /* activityToken */);
-        clientTransaction.addCallback(ConfigurationChangeItem.obtain(config));
-        final IApplicationThread appThread = thread.getApplicationThread();
-        try {
-            appThread.scheduleTransaction(clientTransaction);
-        } catch (Exception ignored) {
-        }
-        InstrumentationRegistry.getInstrumentation().waitForIdleSync();
     }
 
     @Test
@@ -733,7 +692,8 @@ public class ActivityThreadTest {
         final ClientTransactionItem callbackItem = ActivityRelaunchItem.obtain(null,
                 null, 0, new MergedConfiguration(), false /* preserveWindow */);
         final ResumeActivityItem resumeStateRequest =
-                ResumeActivityItem.obtain(true /* isForward */);
+                ResumeActivityItem.obtain(true /* isForward */,
+                        false /* shouldSendCompatFakeFocus*/);
 
         final ClientTransaction transaction = newTransaction(activity);
         transaction.addCallback(callbackItem);
@@ -744,7 +704,8 @@ public class ActivityThreadTest {
 
     private static ClientTransaction newResumeTransaction(Activity activity) {
         final ResumeActivityItem resumeStateRequest =
-                ResumeActivityItem.obtain(true /* isForward */);
+                ResumeActivityItem.obtain(true /* isForward */,
+                        false /* shouldSendCompatFakeFocus */);
 
         final ClientTransaction transaction = newTransaction(activity);
         transaction.setLifecycleStateRequest(resumeStateRequest);

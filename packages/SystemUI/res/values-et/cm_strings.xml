@@ -18,8 +18,6 @@
  */
 -->
 <resources xmlns:xliff="urn:oasis:names:tc:xliff:document:1.2">
-    <string name="accessibility_dpad_left">Kursor vasakule</string>
-    <string name="accessibility_dpad_right">Kursor paremale</string>
     <string name="clock">Kell</string>
     <string name="global_action_restart_more">Taaskäivita\u2026</string>
     <string name="global_action_restart_recovery">Taastus</string>
@@ -36,8 +34,6 @@
     <string name="quick_settings_ambient_display_label">Säästlik ekraan</string>
     <string name="accessibility_quick_settings_ambient_display_off">Säästlik ekraan väljas.</string>
     <string name="accessibility_quick_settings_ambient_display_on">Säästlik ekraan sees.</string>
-    <string name="accessibility_quick_settings_ambient_display_changed_off">Säästlik ekraan väljalülitatud.</string>
-    <string name="accessibility_quick_settings_ambient_display_changed_on">Säästlik ekraan sisselülitatud.</string>
     <string name="quick_settings_aod_label">Alati-sees ekraan</string>
     <string name="quick_settings_aod_off_powersave_label">Alati-sees ekraan väljas\nAkusäästja</string>
     <string name="quick_settings_caffeine_label">Kofeiin</string>
@@ -46,8 +42,6 @@
     <string name="quick_settings_heads_up_label">Piiluvad teated</string>
     <string name="accessibility_quick_settings_heads_up_off">Piiluvad teated väljas.</string>
     <string name="accessibility_quick_settings_heads_up_on">Piiluvad teated sees.</string>
-    <string name="accessibility_quick_settings_heads_up_changed_off">Piiluvad teated on väljalülitatud.</string>
-    <string name="accessibility_quick_settings_heads_up_changed_on">Piiluvad teated on sisselülitatud.</string>
     <string name="quick_settings_powershare_label">Wireless PowerShare</string>
     <string name="quick_settings_powershare_off_powersave_label">Wireless PowerShare väljas\nAkusäästja</string>
     <string name="quick_settings_powershare_off_low_battery_label">Wireless PowerShare väljas\nAku on liiga tühi</string>
@@ -55,18 +49,12 @@
     <string name="quick_settings_reading_mode">Lugemisrežiim</string>
     <string name="accessibility_quick_settings_reading_mode_on">Lugemisrežiim sees.</string>
     <string name="accessibility_quick_settings_reading_mode_off">Lugemisrežiim väljas.</string>
-    <string name="accessibility_quick_settings_reading_mode_changed_on">Lugemisrežiim sisselülitatud.</string>
-    <string name="accessibility_quick_settings_reading_mode_changed_off">Lugemisrežiim väljalülitatud.</string>
     <string name="quick_settings_sync_label">Sünk</string>
     <string name="accessibility_quick_settings_sync_off">Sünk väljas.</string>
     <string name="accessibility_quick_settings_sync_on">Sünk sees.</string>
-    <string name="accessibility_quick_settings_sync_changed_off">Sünk välja lülitatud.</string>
-    <string name="accessibility_quick_settings_sync_changed_on">Sünk sisse lülitatud.</string>
     <string name="quick_settings_profiles_label">Süsteemi profiilid</string>
     <string name="accessibility_quick_settings_profiles_off">Profiilid väljas.</string>
     <string name="accessibility_quick_settings_profiles">Profiil: <xliff:g id="profile" example="Default">%s</xliff:g>.</string>
-    <string name="accessibility_quick_settings_profiles_changed_off">Profiilid välja lülitatud.</string>
-    <string name="accessibility_quick_settings_profiles_changed">Profiil muudetud: <xliff:g id="profile" example="Default">%s</xliff:g>.</string>
     <string name="quick_settings_usb_tether_label">USB lõastamine</string>
     <string name="quick_settings_vpn_label">VPN</string>
     <string name="quick_settings_vpn_connect_dialog_title">Ühendu\u2026</string>
@@ -74,4 +62,6 @@
     <string name="vpn_credentials_username">Kasutajanimi</string>
     <string name="vpn_credentials_password">Parool</string>
     <string name="vpn_credentials_dialog_connect">Ühenda</string>
+    <string name="accessibility_dpad_left">Kursor vasakule</string>
+    <string name="accessibility_dpad_right">Kursor paremale</string>
 </resources>

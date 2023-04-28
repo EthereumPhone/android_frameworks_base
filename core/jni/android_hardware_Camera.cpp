@@ -529,9 +529,8 @@ static jint android_hardware_Camera_getNumberOfCameras(JNIEnv *env, jobject thiz
     return Camera::getNumberOfCameras();
 }
 
-static void android_hardware_Camera_getCameraInfo(JNIEnv *env, jobject thiz,
-    jint cameraId, jobject info_obj)
-{
+static void android_hardware_Camera_getCameraInfo(JNIEnv *env, jobject thiz, jint cameraId,
+                                                  jboolean overrideToPortrait, jobject info_obj) {
     CameraInfo cameraInfo;
     if (cameraId >= Camera::getNumberOfCameras() || cameraId < 0) {
         ALOGE("%s: Unknown camera ID %d", __FUNCTION__, cameraId);
@@ -539,7 +538,7 @@ static void android_hardware_Camera_getCameraInfo(JNIEnv *env, jobject thiz,
         return;
     }
 
-    status_t rc = Camera::getCameraInfo(cameraId, &cameraInfo);
+    status_t rc = Camera::getCameraInfo(cameraId, overrideToPortrait, &cameraInfo);
     if (rc != NO_ERROR) {
         jniThrowRuntimeException(env, "Fail to get camera info");
         return;
@@ -555,9 +554,9 @@ static void android_hardware_Camera_getCameraInfo(JNIEnv *env, jobject thiz,
 }
 
 // connect to camera service
-static jint android_hardware_Camera_native_setup(JNIEnv *env, jobject thiz,
-    jobject weak_this, jint cameraId, jstring clientPackageName)
-{
+static jint android_hardware_Camera_native_setup(JNIEnv *env, jobject thiz, jobject weak_this,
+                                                 jint cameraId, jstring clientPackageName,
+                                                 jboolean overrideToPortrait) {
     // Convert jstring to String16
     const char16_t *rawClientName = reinterpret_cast<const char16_t*>(
         env->GetStringChars(clientPackageName, NULL));
@@ -567,8 +566,9 @@ static jint android_hardware_Camera_native_setup(JNIEnv *env, jobject thiz,
                             reinterpret_cast<const jchar*>(rawClientName));
 
     int targetSdkVersion = android_get_application_target_sdk_version();
-    sp<Camera> camera = Camera::connect(cameraId, clientName, Camera::USE_CALLING_UID,
-                                        Camera::USE_CALLING_PID, targetSdkVersion);
+    sp<Camera> camera =
+            Camera::connect(cameraId, clientName, Camera::USE_CALLING_UID, Camera::USE_CALLING_PID,
+                            targetSdkVersion, overrideToPortrait);
     if (camera == NULL) {
         return -EACCES;
     }
@@ -596,7 +596,7 @@ static jint android_hardware_Camera_native_setup(JNIEnv *env, jobject thiz,
 
     // Update default display orientation in case the sensor is reverse-landscape
     CameraInfo cameraInfo;
-    status_t rc = Camera::getCameraInfo(cameraId, &cameraInfo);
+    status_t rc = Camera::getCameraInfo(cameraId, overrideToPortrait, &cameraInfo);
     if (rc != NO_ERROR) {
         ALOGE("%s: getCameraInfo error: %d", __FUNCTION__, rc);
         return rc;

@@ -18,7 +18,6 @@ import androidx.annotation.NonNull;
 
 import com.android.systemui.dump.DumpManager;
 
-import java.io.FileDescriptor;
 import java.io.PrintWriter;
 
 /**
@@ -31,9 +30,8 @@ public interface Dumpable {
 
     /**
      * Called when it's time to dump the internal state
-     * @param fd A file descriptor.
      * @param pw Where to write your dump to.
      * @param args Arguments.
      */
-    void dump(@NonNull FileDescriptor fd, @NonNull PrintWriter pw, @NonNull String[] args);
+    void dump(@NonNull PrintWriter pw, @NonNull String[] args);
 }

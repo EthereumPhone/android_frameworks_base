@@ -62,6 +62,8 @@ public enum ScreenshotEvent implements UiEventLogger.UiEventEnum {
     SCREENSHOT_EXPLICIT_DISMISSAL(311),
     @UiEvent(doc = "screenshot swiped to dismiss")
     SCREENSHOT_SWIPE_DISMISSED(656),
+    @UiEvent(doc = "screenshot dismissed, miscellaneous reason")
+    SCREENSHOT_DISMISSED_OTHER(1076),
     @UiEvent(doc = "screenshot reentered for new screenshot")
     SCREENSHOT_REENTERED(640),
     @UiEvent(doc = "Long screenshot button was shown to the user")
@@ -83,7 +85,13 @@ public enum ScreenshotEvent implements UiEventLogger.UiEventEnum {
     @UiEvent(doc = "Long screenshot editor activity loaded a previously saved screenshot")
     SCREENSHOT_LONG_SCREENSHOT_ACTIVITY_CACHED_IMAGE_LOADED(890),
     @UiEvent(doc = "Long screenshot editor activity finished")
-    SCREENSHOT_LONG_SCREENSHOT_ACTIVITY_FINISHED(891);
+    SCREENSHOT_LONG_SCREENSHOT_ACTIVITY_FINISHED(891),
+    @UiEvent(doc = "User has saved a long screenshot to a file")
+    SCREENSHOT_LONG_SCREENSHOT_SAVED(910),
+    @UiEvent(doc = "User has discarded the result of a long screenshot")
+    SCREENSHOT_LONG_SCREENSHOT_EXIT(911),
+    @UiEvent(doc = "A screenshot has been taken and saved to work profile")
+    SCREENSHOT_SAVED_TO_WORK_PROFILE(1240);
 
     private final int mId;
 

@@ -16,6 +16,10 @@
 
 package android.telephony;
 
+import static android.telephony.TelephonyManager.UNKNOWN_CARRIER_ID;
+
+import static com.android.internal.telephony.TelephonyStatsLog.TELEPHONY_ANOMALY_DETECTED;
+
 import android.annotation.NonNull;
 import android.annotation.RequiresPermission;
 import android.content.Context;
@@ -23,7 +27,9 @@ import android.content.Intent;
 import android.content.pm.PackageManager;
 import android.content.pm.ResolveInfo;
 import android.os.ParcelUuid;
+import android.provider.DeviceConfig;
 
+import com.android.internal.telephony.TelephonyStatsLog;
 import com.android.internal.util.IndentingPrintWriter;
 import com.android.telephony.Rlog;
 
@@ -52,6 +58,9 @@ import java.util.concurrent.ConcurrentHashMap;
 public final class AnomalyReporter {
     private static final String TAG = "AnomalyReporter";
 
+    private static final String KEY_IS_TELEPHONY_ANOMALY_REPORT_ENABLED =
+            "is_telephony_anomaly_report_enabled";
+
     private static Context sContext = null;
 
     private static Map<UUID, Integer> sEvents = new ConcurrentHashMap<>();
@@ -70,6 +79,7 @@ public final class AnomalyReporter {
      *
      * This method sends the {@link TelephonyManager#ACTION_ANOMALY_REPORTED} broadcast, which is
      * system protected. Invoking this method unless you are the system will result in an error.
+     * Carrier Id will be set as UNKNOWN_CARRIER_ID.
      *
      * @param eventId a fixed event ID that will be sent for each instance of the same event. This
      *        ID should be generated randomly.
@@ -78,10 +88,45 @@ public final class AnomalyReporter {
      *        static and must not contain any sensitive information (especially PII).
      */
     public static void reportAnomaly(@NonNull UUID eventId, String description) {
+        reportAnomaly(eventId, description, UNKNOWN_CARRIER_ID);
+    }
+
+    /**
+     * If enabled, build and send an intent to a Debug Service for logging.
+     *
+     * This method sends the {@link TelephonyManager#ACTION_ANOMALY_REPORTED} broadcast, which is
+     * system protected. Invoking this method unless you are the system will result in an error.
+     *
+     * @param eventId a fixed event ID that will be sent for each instance of the same event. This
+     *        ID should be generated randomly.
+     * @param description an optional description, that if included will be used as the subject for
+     *        identification and discussion of this event. This description should ideally be
+     *        static and must not contain any sensitive information (especially PII).
+     * @param carrierId the carrier of the id associated with this event.
+     */
+    public static void reportAnomaly(@NonNull UUID eventId, String description, int carrierId) {
         if (sContext == null) {
             Rlog.w(TAG, "AnomalyReporter not yet initialized, dropping event=" + eventId);
             return;
         }
+
+        // Don't report if the server-side flag isn't loaded, as it implies other anomaly report
+        // related config hasn't loaded.
+        try {
+            boolean isAnomalyReportEnabledFromServer = DeviceConfig.getBoolean(
+                    DeviceConfig.NAMESPACE_TELEPHONY, KEY_IS_TELEPHONY_ANOMALY_REPORT_ENABLED,
+                    false);
+            if (!isAnomalyReportEnabledFromServer) return;
+        } catch (Exception e) {
+            Rlog.w(TAG, "Unable to read device config, dropping event=" + eventId);
+            return;
+        }
+
+        TelephonyStatsLog.write(
+                TELEPHONY_ANOMALY_DETECTED,
+                carrierId,
+                eventId.getLeastSignificantBits(),
+                eventId.getMostSignificantBits());
 
         // If this event has already occurred, skip sending intents for it; regardless log its
         // invocation here.

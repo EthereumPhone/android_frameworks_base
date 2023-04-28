@@ -183,8 +183,17 @@ public final class NetworkRegistrationInfo implements Parcelable {
     @TransportType
     private final int mTransportType;
 
+    /**
+     * The initial registration state
+     */
     @RegistrationState
-    private final int mRegistrationState;
+    private final int mInitialRegistrationState;
+
+    /**
+     * The registration state that might have been overridden by config
+     */
+    @RegistrationState
+    private int mRegistrationState;
 
     /**
      * Save the {@link ServiceState.RoamingType roaming type}. it can be overridden roaming type
@@ -242,16 +251,20 @@ public final class NetworkRegistrationInfo implements Parcelable {
      * @param cellIdentity The identity representing a unique cell or wifi AP. Set to null if the
      * information is not available.
      * @param rplmn the registered plmn or the last plmn for attempted registration if reg failed.
+     * @param voiceSpecificInfo Voice specific registration information.
+     * @param dataSpecificInfo Data specific registration information.
      */
     private NetworkRegistrationInfo(@Domain int domain, @TransportType int transportType,
-                                   @RegistrationState int registrationState,
-                                   @NetworkType int accessNetworkTechnology, int rejectCause,
-                                   boolean emergencyOnly,
-                                   @Nullable @ServiceType List<Integer> availableServices,
-                                   @Nullable CellIdentity cellIdentity, @Nullable String rplmn) {
+            @RegistrationState int registrationState,
+            @NetworkType int accessNetworkTechnology, int rejectCause,
+            boolean emergencyOnly, @Nullable @ServiceType List<Integer> availableServices,
+            @Nullable CellIdentity cellIdentity, @Nullable String rplmn,
+            @Nullable VoiceSpecificRegistrationInfo voiceSpecificInfo,
+            @Nullable DataSpecificRegistrationInfo dataSpecificInfo) {
         mDomain = domain;
         mTransportType = transportType;
         mRegistrationState = registrationState;
+        mInitialRegistrationState = registrationState;
         mRoamingType = (registrationState == REGISTRATION_STATE_ROAMING)
                 ? ServiceState.ROAMING_TYPE_UNKNOWN : ServiceState.ROAMING_TYPE_NOT_ROAMING;
         setAccessNetworkTechnology(accessNetworkTechnology);
@@ -262,6 +275,10 @@ public final class NetworkRegistrationInfo implements Parcelable {
         mEmergencyOnly = emergencyOnly;
         mNrState = NR_STATE_NONE;
         mRplmn = rplmn;
+        mVoiceSpecificInfo = voiceSpecificInfo;
+        mDataSpecificInfo = dataSpecificInfo;
+
+        updateNrState();
     }
 
     /**
@@ -276,10 +293,9 @@ public final class NetworkRegistrationInfo implements Parcelable {
                                    boolean cssSupported, int roamingIndicator, int systemIsInPrl,
                                    int defaultRoamingIndicator) {
         this(domain, transportType, registrationState, accessNetworkTechnology, rejectCause,
-                emergencyOnly, availableServices, cellIdentity, rplmn);
-
-        mVoiceSpecificInfo = new VoiceSpecificRegistrationInfo(cssSupported, roamingIndicator,
-                systemIsInPrl, defaultRoamingIndicator);
+                emergencyOnly, availableServices, cellIdentity, rplmn,
+                new VoiceSpecificRegistrationInfo(cssSupported, roamingIndicator,
+                        systemIsInPrl, defaultRoamingIndicator), null);
     }
 
     /**
@@ -295,28 +311,27 @@ public final class NetworkRegistrationInfo implements Parcelable {
                                    boolean isNrAvailable, boolean isEndcAvailable,
                                    @Nullable VopsSupportInfo vopsSupportInfo) {
         this(domain, transportType, registrationState, accessNetworkTechnology, rejectCause,
-                emergencyOnly, availableServices, cellIdentity, rplmn);
-        mDataSpecificInfo = new DataSpecificRegistrationInfo(
-                maxDataCalls, isDcNrRestricted, isNrAvailable,
-                isEndcAvailable, vopsSupportInfo);
-        updateNrState();
+                emergencyOnly, availableServices, cellIdentity, rplmn, null,
+                new DataSpecificRegistrationInfo(maxDataCalls, isDcNrRestricted, isNrAvailable,
+                        isEndcAvailable, vopsSupportInfo));
     }
 
     private NetworkRegistrationInfo(Parcel source) {
         mDomain = source.readInt();
         mTransportType = source.readInt();
         mRegistrationState = source.readInt();
+        mInitialRegistrationState = source.readInt();
         mRoamingType = source.readInt();
         mAccessNetworkTechnology = source.readInt();
         mRejectCause = source.readInt();
         mEmergencyOnly = source.readBoolean();
         mAvailableServices = new ArrayList<>();
-        source.readList(mAvailableServices, Integer.class.getClassLoader());
-        mCellIdentity = source.readParcelable(CellIdentity.class.getClassLoader());
+        source.readList(mAvailableServices, Integer.class.getClassLoader(), java.lang.Integer.class);
+        mCellIdentity = source.readParcelable(CellIdentity.class.getClassLoader(), android.telephony.CellIdentity.class);
         mVoiceSpecificInfo = source.readParcelable(
-                VoiceSpecificRegistrationInfo.class.getClassLoader());
+                VoiceSpecificRegistrationInfo.class.getClassLoader(), android.telephony.VoiceSpecificRegistrationInfo.class);
         mDataSpecificInfo = source.readParcelable(
-                DataSpecificRegistrationInfo.class.getClassLoader());
+                DataSpecificRegistrationInfo.class.getClassLoader(), android.telephony.DataSpecificRegistrationInfo.class);
         mNrState = source.readInt();
         mRplmn = source.readString();
         mIsUsingCarrierAggregation = source.readBoolean();
@@ -332,6 +347,7 @@ public final class NetworkRegistrationInfo implements Parcelable {
         mDomain = nri.mDomain;
         mTransportType = nri.mTransportType;
         mRegistrationState = nri.mRegistrationState;
+        mInitialRegistrationState = nri.mInitialRegistrationState;
         mRoamingType = nri.mRoamingType;
         mAccessNetworkTechnology = nri.mAccessNetworkTechnology;
         mIsUsingCarrierAggregation = nri.mIsUsingCarrierAggregation;
@@ -394,6 +410,15 @@ public final class NetworkRegistrationInfo implements Parcelable {
     }
 
     /**
+     * @return The initial registration state.
+     *
+     * @hide
+     */
+    public @RegistrationState int getInitialRegistrationState() {
+        return mInitialRegistrationState;
+    }
+
+    /**
      * @return {@code true} if registered on roaming or home network, {@code false} otherwise.
      */
     public boolean isRegistered() {
@@ -447,6 +472,17 @@ public final class NetworkRegistrationInfo implements Parcelable {
      */
     public void setRoamingType(@ServiceState.RoamingType int roamingType) {
         mRoamingType = roamingType;
+
+        // make sure mRegistrationState to be consistent in case of any roaming type override
+        if (isRoaming()) {
+            if (mRegistrationState == REGISTRATION_STATE_HOME) {
+                mRegistrationState = REGISTRATION_STATE_ROAMING;
+            }
+        } else {
+            if (mRegistrationState == REGISTRATION_STATE_ROAMING) {
+                mRegistrationState = REGISTRATION_STATE_HOME;
+            }
+        }
     }
 
     /**
@@ -630,6 +666,8 @@ public final class NetworkRegistrationInfo implements Parcelable {
                 .append(" transportType=").append(
                         AccessNetworkConstants.transportTypeToString(mTransportType))
                 .append(" registrationState=").append(registrationStateToString(mRegistrationState))
+                .append(" mInitialRegistrationState=")
+                .append(registrationStateToString(mInitialRegistrationState))
                 .append(" roamingType=").append(ServiceState.roamingTypeToString(mRoamingType))
                 .append(" accessNetworkTechnology=")
                 .append(TelephonyManager.getNetworkTypeName(mAccessNetworkTechnology))
@@ -650,10 +688,10 @@ public final class NetworkRegistrationInfo implements Parcelable {
 
     @Override
     public int hashCode() {
-        return Objects.hash(mDomain, mTransportType, mRegistrationState, mRoamingType,
-                mAccessNetworkTechnology, mRejectCause, mEmergencyOnly, mAvailableServices,
-                mCellIdentity, mVoiceSpecificInfo, mDataSpecificInfo, mNrState, mRplmn,
-                mIsUsingCarrierAggregation);
+        return Objects.hash(mDomain, mTransportType, mRegistrationState, mInitialRegistrationState,
+                mRoamingType, mAccessNetworkTechnology, mRejectCause, mEmergencyOnly,
+                mAvailableServices, mCellIdentity, mVoiceSpecificInfo, mDataSpecificInfo, mNrState,
+                mRplmn, mIsUsingCarrierAggregation);
     }
 
     @Override
@@ -668,6 +706,7 @@ public final class NetworkRegistrationInfo implements Parcelable {
         return mDomain == other.mDomain
                 && mTransportType == other.mTransportType
                 && mRegistrationState == other.mRegistrationState
+                && mInitialRegistrationState == other.mInitialRegistrationState
                 && mRoamingType == other.mRoamingType
                 && mAccessNetworkTechnology == other.mAccessNetworkTechnology
                 && mRejectCause == other.mRejectCause
@@ -690,6 +729,7 @@ public final class NetworkRegistrationInfo implements Parcelable {
         dest.writeInt(mDomain);
         dest.writeInt(mTransportType);
         dest.writeInt(mRegistrationState);
+        dest.writeInt(mInitialRegistrationState);
         dest.writeInt(mRoamingType);
         dest.writeInt(mAccessNetworkTechnology);
         dest.writeInt(mRejectCause);
@@ -786,7 +826,7 @@ public final class NetworkRegistrationInfo implements Parcelable {
         private int mTransportType;
 
         @RegistrationState
-        private int mRegistrationState;
+        private int mInitialRegistrationState;
 
         @NetworkType
         private int mAccessNetworkTechnology;
@@ -803,6 +843,12 @@ public final class NetworkRegistrationInfo implements Parcelable {
 
         @NonNull
         private String mRplmn = "";
+
+        @Nullable
+        private DataSpecificRegistrationInfo mDataSpecificRegistrationInfo;
+
+        @Nullable
+        private VoiceSpecificRegistrationInfo mVoiceSpecificRegistrationInfo;
 
         /**
          * Default constructor for Builder.
@@ -841,7 +887,7 @@ public final class NetworkRegistrationInfo implements Parcelable {
          * @return The same instance of the builder.
          */
         public @NonNull Builder setRegistrationState(@RegistrationState int registrationState) {
-            mRegistrationState = registrationState;
+            mInitialRegistrationState = registrationState;
             return this;
         }
 
@@ -930,15 +976,40 @@ public final class NetworkRegistrationInfo implements Parcelable {
         }
 
         /**
+         * Set voice specific registration information.
+         *
+         * @param info The voice specific registration information.
+         * @return The builder.
+         * @hide
+         */
+        public @NonNull Builder setVoiceSpecificInfo(@NonNull VoiceSpecificRegistrationInfo info) {
+            mVoiceSpecificRegistrationInfo = info;
+            return this;
+        }
+
+        /**
+         * Set data specific registration information.
+         *
+         * @param info The data specific registration information.
+         * @return The builder.
+         * @hide
+         */
+        public @NonNull Builder setDataSpecificInfo(@NonNull DataSpecificRegistrationInfo info) {
+            mDataSpecificRegistrationInfo = info;
+            return this;
+        }
+
+        /**
          * Build the NetworkRegistrationInfo.
          * @return the NetworkRegistrationInfo object.
          * @hide
          */
         @SystemApi
         public @NonNull NetworkRegistrationInfo build() {
-            return new NetworkRegistrationInfo(mDomain, mTransportType, mRegistrationState,
+            return new NetworkRegistrationInfo(mDomain, mTransportType, mInitialRegistrationState,
                     mAccessNetworkTechnology, mRejectCause, mEmergencyOnly, mAvailableServices,
-                    mCellIdentity, mRplmn);
+                    mCellIdentity, mRplmn, mVoiceSpecificRegistrationInfo,
+                    mDataSpecificRegistrationInfo);
         }
     }
 }

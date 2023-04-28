@@ -18,7 +18,9 @@ package com.android.server.display;
 
 import android.hardware.Sensor;
 import android.hardware.SensorEvent;
+import android.os.Parcel;
 import android.os.SystemClock;
+import android.view.DisplayAddress;
 
 import java.lang.reflect.Constructor;
 import java.lang.reflect.Field;
@@ -26,13 +28,13 @@ import java.lang.reflect.Method;
 
 public final class TestUtils {
 
-    public static SensorEvent createSensorEvent(Sensor sensor, int lux) throws Exception {
+    public static SensorEvent createSensorEvent(Sensor sensor, int value) throws Exception {
         final Constructor<SensorEvent> constructor =
                 SensorEvent.class.getDeclaredConstructor(int.class);
         constructor.setAccessible(true);
         final SensorEvent event = constructor.newInstance(1);
         event.sensor = sensor;
-        event.values[0] = lux;
+        event.values[0] = value;
         event.timestamp = SystemClock.elapsedRealtimeNanos();
         return event;
     }
@@ -57,4 +59,13 @@ public final class TestUtils {
         return sensor;
     }
 
+    /**
+     * Create a custom {@link DisplayAddress} to ensure we're not relying on any specific
+     * display-address implementation in our code. Intentionally uses default object (reference)
+     * equality rules.
+     */
+    public static class TestDisplayAddress extends DisplayAddress {
+        @Override
+        public void writeToParcel(Parcel out, int flags) { }
+    }
 }

@@ -21,8 +21,8 @@ import android.util.Log;
 import android.view.View;
 
 import com.android.systemui.plugins.PluginListener;
+import com.android.systemui.plugins.PluginManager;
 import com.android.systemui.plugins.ViewProvider;
-import com.android.systemui.shared.plugins.PluginManager;
 
 /**
  * Define an interface or abstract class as follows that includes the
@@ -60,6 +60,7 @@ public class PluginInflateContainer extends AutoReinflateContainer
         super(context, attrs);
         TypedArray a = context.obtainStyledAttributes(attrs, R.styleable.PluginInflateContainer);
         String viewType = a.getString(R.styleable.PluginInflateContainer_viewType);
+        a.recycle();
         try {
             mClass = (Class<ViewProvider>) Class.forName(viewType);
         } catch (Exception e) {

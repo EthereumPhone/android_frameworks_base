@@ -43,8 +43,10 @@ import static android.app.AppOpsManager.OP_FLAG_SELF;
 import static android.app.AppOpsManager.OP_FLAG_TRUSTED_PROXIED;
 import static android.app.AppOpsManager.OP_NONE;
 import static android.app.AppOpsManager.OP_PLAY_AUDIO;
+import static android.app.AppOpsManager.OP_RECEIVE_AMBIENT_TRIGGER_AUDIO;
 import static android.app.AppOpsManager.OP_RECORD_AUDIO;
 import static android.app.AppOpsManager.OP_RECORD_AUDIO_HOTWORD;
+import static android.app.AppOpsManager.OP_VIBRATE;
 import static android.app.AppOpsManager.OnOpStartedListener.START_TYPE_FAILED;
 import static android.app.AppOpsManager.OnOpStartedListener.START_TYPE_RESUMED;
 import static android.app.AppOpsManager.OnOpStartedListener.START_TYPE_STARTED;
@@ -69,6 +71,7 @@ import static android.app.AppOpsManager.extractUidStateFromKey;
 import static android.app.AppOpsManager.makeKey;
 import static android.app.AppOpsManager.modeToName;
 import static android.app.AppOpsManager.opAllowSystemBypassRestriction;
+import static android.app.AppOpsManager.opRestrictsRead;
 import static android.app.AppOpsManager.opToName;
 import static android.app.AppOpsManager.opToPublicName;
 import static android.app.AppOpsManager.resolveFirstUnrestrictedUidState;
@@ -113,7 +116,6 @@ import android.content.pm.PackageManager;
 import android.content.pm.PackageManagerInternal;
 import android.content.pm.PermissionInfo;
 import android.content.pm.UserInfo;
-import android.content.pm.parsing.component.ParsedAttribution;
 import android.database.ContentObserver;
 import android.hardware.camera2.CameraDevice.CAMERA_AUDIO_RESTRICTION;
 import android.net.Uri;
@@ -178,6 +180,10 @@ import com.android.server.SystemServerInitThreadPool;
 import com.android.server.SystemServiceManager;
 import com.android.server.pm.PackageList;
 import com.android.server.pm.parsing.pkg.AndroidPackage;
+import com.android.server.pm.pkg.component.ParsedAttribution;
+import com.android.server.policy.AppOpsPolicy;
+
+import dalvik.annotation.optimization.NeverCompile;
 
 import libcore.util.EmptyArray;
 
@@ -261,6 +267,7 @@ public class AppOpsService extends IAppOpsService.Stub {
             OP_PLAY_AUDIO,
             OP_RECORD_AUDIO,
             OP_CAMERA,
+            OP_VIBRATE,
     };
 
     private static final int MAX_UNFORWARDED_OPS = 10;
@@ -1830,13 +1837,13 @@ public class AppOpsService extends IAppOpsService.Stub {
                     for (int attributionNum = 0; attributionNum < numAttributions;
                             attributionNum++) {
                         ParsedAttribution attribution = pkg.getAttributions().get(attributionNum);
-                        attributionTags.add(attribution.tag);
+                        attributionTags.add(attribution.getTag());
 
-                        int numInheritFrom = attribution.inheritFrom.size();
+                        int numInheritFrom = attribution.getInheritFrom().size();
                         for (int inheritFromNum = 0; inheritFromNum < numInheritFrom;
                                 inheritFromNum++) {
-                            dstAttributionTags.put(attribution.inheritFrom.get(inheritFromNum),
-                                    attribution.tag);
+                            dstAttributionTags.put(attribution.getInheritFrom().get(inheritFromNum),
+                                    attribution.getTag());
                         }
                     }
                 }
@@ -2364,7 +2371,8 @@ public class AppOpsService extends IAppOpsService.Stub {
         ActivityManagerInternal ami = LocalServices.getService(ActivityManagerInternal.class);
         boolean isSelfRequest = (filter & FILTER_BY_UID) != 0 && uid == Binder.getCallingUid();
         if (!isSelfRequest) {
-            boolean isCallerInstrumented = ami.isUidCurrentlyInstrumented(Binder.getCallingUid());
+            boolean isCallerInstrumented =
+                    ami.getInstrumentationSourceUid(Binder.getCallingUid()) != Process.INVALID_UID;
             boolean isCallerSystem = Binder.getCallingPid() == Process.myPid();
             boolean isCallerPermissionController;
             try {
@@ -2376,7 +2384,13 @@ public class AppOpsService extends IAppOpsService.Stub {
                 return;
             }
 
-            if (!isCallerSystem && !isCallerInstrumented && !isCallerPermissionController) {
+            boolean doesCallerHavePermission = mContext.checkPermission(
+                    android.Manifest.permission.GET_HISTORICAL_APP_OPS_STATS,
+                    Binder.getCallingPid(), Binder.getCallingUid())
+                    == PackageManager.PERMISSION_GRANTED;
+
+            if (!isCallerSystem && !isCallerInstrumented && !isCallerPermissionController
+                    && !doesCallerHavePermission) {
                 mHandler.post(() -> callback.sendResult(new Bundle()));
                 return;
             }
@@ -2866,6 +2880,10 @@ public class AppOpsService extends IAppOpsService.Stub {
             // features may require permissions our remote caller does not have.
             final long identity = Binder.clearCallingIdentity();
             try {
+                if (shouldIgnoreCallback(switchedCode, callback.mCallingPid,
+                        callback.mCallingUid)) {
+                    continue;
+                }
                 callback.mCallback.opChanged(switchedCode, uid, packageName);
             } catch (RemoteException e) {
                 /* ignore */
@@ -3308,13 +3326,21 @@ public class AppOpsService extends IAppOpsService.Stub {
         Objects.requireNonNull(packageName);
         try {
             verifyAndGetBypass(uid, packageName, null);
-            if (filterAppAccessUnlocked(packageName)) {
-                return AppOpsManager.MODE_ERRORED;
+            // When the caller is the system, it's possible that the packageName is the special
+            // one (e.g., "root") which isn't actually existed.
+            if (resolveUid(packageName) == uid
+                    || (isPackageExisted(packageName) && !filterAppAccessUnlocked(packageName))) {
+                return AppOpsManager.MODE_ALLOWED;
             }
-            return AppOpsManager.MODE_ALLOWED;
+            return AppOpsManager.MODE_ERRORED;
         } catch (SecurityException ignored) {
             return AppOpsManager.MODE_ERRORED;
         }
+    }
+
+    private boolean isPackageExisted(String packageName) {
+        return LocalServices.getService(PackageManagerInternal.class)
+                .getPackageStateInternal(packageName) != null;
     }
 
     /**
@@ -3826,7 +3852,7 @@ public class AppOpsService extends IAppOpsService.Stub {
         // the data gated by OP_RECORD_AUDIO.
         //
         // TODO: Revert this change before Android 12.
-        if (code == OP_RECORD_AUDIO_HOTWORD) {
+        if (code == OP_RECORD_AUDIO_HOTWORD || code == OP_RECEIVE_AMBIENT_TRIGGER_AUDIO) {
             int result = checkOperation(OP_RECORD_AUDIO, uid, packageName);
             if (result != AppOpsManager.MODE_ALLOWED) {
                 return new SyncNotedAppOp(result, code, attributionTag, packageName);
@@ -3839,18 +3865,18 @@ public class AppOpsService extends IAppOpsService.Stub {
     }
 
     @Override
-    public SyncNotedAppOp startProxyOperation(int code,
+    public SyncNotedAppOp startProxyOperation(@NonNull IBinder clientId, int code,
             @NonNull AttributionSource attributionSource, boolean startIfModeDefault,
             boolean shouldCollectAsyncNotedOp, String message, boolean shouldCollectMessage,
             boolean skipProxyOperation, @AttributionFlags int proxyAttributionFlags,
             @AttributionFlags int proxiedAttributionFlags, int attributionChainId) {
-        return mCheckOpsDelegateDispatcher.startProxyOperation(code, attributionSource,
+        return mCheckOpsDelegateDispatcher.startProxyOperation(clientId, code, attributionSource,
                 startIfModeDefault, shouldCollectAsyncNotedOp, message, shouldCollectMessage,
                 skipProxyOperation, proxyAttributionFlags, proxiedAttributionFlags,
                 attributionChainId);
     }
 
-    private SyncNotedAppOp startProxyOperationImpl(int code,
+    private SyncNotedAppOp startProxyOperationImpl(@NonNull IBinder clientId, int code,
             @NonNull AttributionSource attributionSource,
             boolean startIfModeDefault, boolean shouldCollectAsyncNotedOp, String message,
             boolean shouldCollectMessage, boolean skipProxyOperation, @AttributionFlags
@@ -3859,11 +3885,9 @@ public class AppOpsService extends IAppOpsService.Stub {
         final int proxyUid = attributionSource.getUid();
         final String proxyPackageName = attributionSource.getPackageName();
         final String proxyAttributionTag = attributionSource.getAttributionTag();
-        final IBinder proxyToken = attributionSource.getToken();
         final int proxiedUid = attributionSource.getNextUid();
         final String proxiedPackageName = attributionSource.getNextPackageName();
         final String proxiedAttributionTag = attributionSource.getNextAttributionTag();
-        final IBinder proxiedToken = attributionSource.getNextToken();
 
         verifyIncomingProxyUid(attributionSource);
         verifyIncomingOp(code);
@@ -3902,7 +3926,7 @@ public class AppOpsService extends IAppOpsService.Stub {
 
         if (!skipProxyOperation) {
             // Test if the proxied operation will succeed before starting the proxy operation
-            final SyncNotedAppOp testProxiedOp = startOperationUnchecked(proxiedToken, code,
+            final SyncNotedAppOp testProxiedOp = startOperationUnchecked(clientId, code,
                     proxiedUid, resolvedProxiedPackageName, proxiedAttributionTag, proxyUid,
                     resolvedProxyPackageName, proxyAttributionTag, proxiedFlags, startIfModeDefault,
                     shouldCollectAsyncNotedOp, message, shouldCollectMessage,
@@ -3914,7 +3938,7 @@ public class AppOpsService extends IAppOpsService.Stub {
             final int proxyFlags = isProxyTrusted ? AppOpsManager.OP_FLAG_TRUSTED_PROXY
                     : AppOpsManager.OP_FLAG_UNTRUSTED_PROXY;
 
-            final SyncNotedAppOp proxyAppOp = startOperationUnchecked(proxyToken, code, proxyUid,
+            final SyncNotedAppOp proxyAppOp = startOperationUnchecked(clientId, code, proxyUid,
                     resolvedProxyPackageName, proxyAttributionTag, Process.INVALID_UID, null, null,
                     proxyFlags, startIfModeDefault, !isProxyTrusted, "proxy " + message,
                     shouldCollectMessage, proxyAttributionFlags, attributionChainId,
@@ -3924,7 +3948,7 @@ public class AppOpsService extends IAppOpsService.Stub {
             }
         }
 
-        return startOperationUnchecked(proxiedToken, code, proxiedUid, resolvedProxiedPackageName,
+        return startOperationUnchecked(clientId, code, proxiedUid, resolvedProxiedPackageName,
                 proxiedAttributionTag, proxyUid, resolvedProxyPackageName, proxyAttributionTag,
                 proxiedFlags, startIfModeDefault, shouldCollectAsyncNotedOp, message,
                 shouldCollectMessage, proxiedAttributionFlags, attributionChainId,
@@ -4065,22 +4089,20 @@ public class AppOpsService extends IAppOpsService.Stub {
     }
 
     @Override
-    public void finishProxyOperation(int code, @NonNull AttributionSource attributionSource,
-            boolean skipProxyOperation) {
-        mCheckOpsDelegateDispatcher.finishProxyOperation(code, attributionSource,
+    public void finishProxyOperation(@NonNull IBinder clientId, int code,
+            @NonNull AttributionSource attributionSource, boolean skipProxyOperation) {
+        mCheckOpsDelegateDispatcher.finishProxyOperation(clientId, code, attributionSource,
                 skipProxyOperation);
     }
 
-    private Void finishProxyOperationImpl(int code, @NonNull AttributionSource attributionSource,
-            boolean skipProxyOperation) {
+    private Void finishProxyOperationImpl(IBinder clientId, int code,
+            @NonNull AttributionSource attributionSource, boolean skipProxyOperation) {
         final int proxyUid = attributionSource.getUid();
         final String proxyPackageName = attributionSource.getPackageName();
         final String proxyAttributionTag = attributionSource.getAttributionTag();
-        final IBinder proxyToken = attributionSource.getToken();
         final int proxiedUid = attributionSource.getNextUid();
         final String proxiedPackageName = attributionSource.getNextPackageName();
         final String proxiedAttributionTag = attributionSource.getNextAttributionTag();
-        final IBinder proxiedToken = attributionSource.getNextToken();
 
         skipProxyOperation = skipProxyOperation
                 && isCallerAndAttributionTrusted(attributionSource);
@@ -4097,7 +4119,7 @@ public class AppOpsService extends IAppOpsService.Stub {
         }
 
         if (!skipProxyOperation) {
-            finishOperationUnchecked(proxyToken, code, proxyUid, resolvedProxyPackageName,
+            finishOperationUnchecked(clientId, code, proxyUid, resolvedProxyPackageName,
                     proxyAttributionTag);
         }
 
@@ -4107,7 +4129,7 @@ public class AppOpsService extends IAppOpsService.Stub {
             return null;
         }
 
-        finishOperationUnchecked(proxiedToken, code, proxiedUid, resolvedProxiedPackageName,
+        finishOperationUnchecked(clientId, code, proxiedUid, resolvedProxiedPackageName,
                 proxiedAttributionTag);
 
         return null;
@@ -4189,6 +4211,9 @@ public class AppOpsService extends IAppOpsService.Stub {
             for (int i = 0; i < callbackCount; i++) {
                 final ActiveCallback callback = callbacks.valueAt(i);
                 try {
+                    if (shouldIgnoreCallback(code, callback.mCallingPid, callback.mCallingUid)) {
+                        continue;
+                    }
                     callback.mCallback.opActiveChanged(code, uid, packageName, attributionTag,
                             active, attributionFlags, attributionChainId);
                 } catch (RemoteException e) {
@@ -4242,6 +4267,9 @@ public class AppOpsService extends IAppOpsService.Stub {
             for (int i = 0; i < callbackCount; i++) {
                 final StartedCallback callback = callbacks.valueAt(i);
                 try {
+                    if (shouldIgnoreCallback(code, callback.mCallingPid, callback.mCallingUid)) {
+                        continue;
+                    }
                     callback.mCallback.opStarted(code, uid, packageName, attributionTag, flags,
                             result, startedType, attributionFlags, attributionChainId);
                 } catch (RemoteException e) {
@@ -4290,6 +4318,9 @@ public class AppOpsService extends IAppOpsService.Stub {
             for (int i = 0; i < callbackCount; i++) {
                 final NotedCallback callback = callbacks.valueAt(i);
                 try {
+                    if (shouldIgnoreCallback(code, callback.mCallingPid, callback.mCallingUid)) {
+                        continue;
+                    }
                     callback.mCallback.opNoted(code, uid, packageName, attributionTag, flags,
                             result);
                 } catch (RemoteException e) {
@@ -4354,8 +4385,20 @@ public class AppOpsService extends IAppOpsService.Stub {
                 Binder.getCallingPid(), Binder.getCallingUid(), null);
     }
 
+    private boolean shouldIgnoreCallback(int op, int watcherPid, int watcherUid) {
+        // If it's a restricted read op, ignore it if watcher doesn't have manage ops permission,
+        // as watcher should not use this to signal if the value is changed.
+        return opRestrictsRead(op) && mContext.checkPermission(Manifest.permission.MANAGE_APPOPS,
+                watcherPid, watcherUid) != PackageManager.PERMISSION_GRANTED;
+    }
+
     private void verifyIncomingOp(int op) {
         if (op >= 0 && op < AppOpsManager._NUM_OP) {
+            // Enforce manage appops permission if it's a restricted read op.
+            if (opRestrictsRead(op)) {
+                mContext.enforcePermission(Manifest.permission.MANAGE_APPOPS,
+                        Binder.getCallingPid(), Binder.getCallingUid(), "verifyIncomingOp");
+            }
             return;
         }
         throw new IllegalArgumentException("Bad operation #" + op);
@@ -4537,6 +4580,26 @@ public class AppOpsService extends IAppOpsService.Stub {
             return new PackageVerificationResult(null,
                     /* isAttributionTagValid */ true);
         }
+        if (Process.isSdkSandboxUid(uid)) {
+            // SDK sandbox processes run in their own UID range, but their associated
+            // UID for checks should always be the UID of the package implementing SDK sandbox
+            // service.
+            // TODO: We will need to modify the callers of this function instead, so
+            // modifications and checks against the app ops state are done with the
+            // correct UID.
+            try {
+                final PackageManager pm = mContext.getPackageManager();
+                final String supplementalPackageName = pm.getSdkSandboxPackageName();
+                if (Objects.equals(packageName, supplementalPackageName)) {
+                    uid = pm.getPackageUidAsUser(supplementalPackageName,
+                            PackageManager.PackageInfoFlags.of(0), UserHandle.getUserId(uid));
+                }
+            } catch (PackageManager.NameNotFoundException e) {
+                // Shouldn't happen for the supplemental package
+                e.printStackTrace();
+            }
+        }
+
 
         // Do not check if uid/packageName/attributionTag is already known.
         synchronized (this) {
@@ -4565,8 +4628,10 @@ public class AppOpsService extends IAppOpsService.Stub {
         }
         if (pkgUid != Process.INVALID_UID) {
             if (pkgUid != UserHandle.getAppId(uid)) {
+                Slog.e(TAG, "Bad call made by uid " + callingUid + ". "
+                        + "Package \"" + packageName + "\" does not belong to uid " + uid + ".");
                 String otherUidMessage = DEBUG ? " but it is really " + pkgUid : " but it is not";
-                throw new SecurityException("Specified package " + packageName + " under uid "
+                throw new SecurityException("Specified package \"" + packageName + "\" under uid "
                         +  UserHandle.getAppId(uid) + otherUidMessage);
             }
             return new PackageVerificationResult(RestrictionBypass.UNRESTRICTED,
@@ -4621,8 +4686,10 @@ public class AppOpsService extends IAppOpsService.Stub {
         }
 
         if (pkgUid != uid) {
+            Slog.e(TAG, "Bad call made by uid " + callingUid + ". "
+                    + "Package \"" + packageName + "\" does not belong to uid " + uid + ".");
             String otherUidMessage = DEBUG ? " but it is really " + pkgUid : " but it is not";
-            throw new SecurityException("Specified package " + packageName + " under uid " + uid
+            throw new SecurityException("Specified package \"" + packageName + "\" under uid " + uid
                     + otherUidMessage);
         }
 
@@ -4639,7 +4706,7 @@ public class AppOpsService extends IAppOpsService.Stub {
         if (pkg.getAttributions() != null) {
             int numAttributions = pkg.getAttributions().size();
             for (int i = 0; i < numAttributions; i++) {
-                if (pkg.getAttributions().get(i).tag.equals(attributionTag)) {
+                if (pkg.getAttributions().get(i).getTag().equals(attributionTag)) {
                     return true;
                 }
             }
@@ -5870,6 +5937,7 @@ public class AppOpsService extends IAppOpsService.Stub {
         }
     }
 
+    @NeverCompile // Avoid size overhead of debugging code.
     @Override
     protected void dump(FileDescriptor fd, PrintWriter pw, String[] args) {
         if (!DumpUtils.checkDumpAndUsageStatsPermission(mContext, TAG, pw)) return;
@@ -6195,8 +6263,8 @@ public class AppOpsService extends IAppOpsService.Stub {
                 }
             }
             if (mAudioRestrictionManager.hasActiveRestrictions() && dumpOp < 0
-                    && dumpPackage != null && dumpMode < 0 && !dumpWatchers && !dumpWatchers) {
-                needSep = mAudioRestrictionManager.dump(pw) | needSep ;
+                    && dumpPackage != null && dumpMode < 0 && !dumpWatchers) {
+                needSep = mAudioRestrictionManager.dump(pw) || needSep;
             }
             if (needSep) {
                 pw.println();
@@ -6470,6 +6538,17 @@ public class AppOpsService extends IAppOpsService.Stub {
                         ipw.decreaseIndent();
                     }
                     ipw.decreaseIndent();
+                }
+            }
+
+            if (!dumpHistory && !dumpWatchers) {
+                pw.println();
+                if (mCheckOpsDelegateDispatcher.mPolicy != null
+                        && mCheckOpsDelegateDispatcher.mPolicy instanceof AppOpsPolicy) {
+                    AppOpsPolicy policy = (AppOpsPolicy) mCheckOpsDelegateDispatcher.mPolicy;
+                    policy.dumpTags(pw);
+                } else {
+                    pw.println("  AppOps policy not set.");
                 }
             }
         }
@@ -6846,7 +6925,8 @@ public class AppOpsService extends IAppOpsService.Stub {
     @Override
     public @Nullable RuntimeAppOpAccessMessage collectRuntimeAppOpAccessMessage() {
         ActivityManagerInternal ami = LocalServices.getService(ActivityManagerInternal.class);
-        boolean isCallerInstrumented = ami.isUidCurrentlyInstrumented(Binder.getCallingUid());
+        boolean isCallerInstrumented =
+                ami.getInstrumentationSourceUid(Binder.getCallingUid()) != Process.INVALID_UID;
         boolean isCallerSystem = Binder.getCallingPid() == Process.myPid();
         if (!isCallerSystem && !isCallerInstrumented) {
             return null;
@@ -7642,42 +7722,42 @@ public class AppOpsService extends IAppOpsService.Stub {
                     attributionFlags, attributionChainId, AppOpsService.this::startOperationImpl);
         }
 
-        public SyncNotedAppOp startProxyOperation(int code,
+        public SyncNotedAppOp startProxyOperation(@NonNull IBinder clientId, int code,
                 @NonNull AttributionSource attributionSource, boolean startIfModeDefault,
                 boolean shouldCollectAsyncNotedOp, String message, boolean shouldCollectMessage,
                 boolean skipProxyOperation, @AttributionFlags int proxyAttributionFlags,
                 @AttributionFlags int proxiedAttributionFlags, int attributionChainId) {
             if (mPolicy != null) {
                 if (mCheckOpsDelegate != null) {
-                    return mPolicy.startProxyOperation(code, attributionSource,
+                    return mPolicy.startProxyOperation(clientId, code, attributionSource,
                             startIfModeDefault, shouldCollectAsyncNotedOp, message,
                             shouldCollectMessage, skipProxyOperation, proxyAttributionFlags,
                             proxiedAttributionFlags, attributionChainId,
                             this::startDelegateProxyOperationImpl);
                 } else {
-                    return mPolicy.startProxyOperation(code, attributionSource,
+                    return mPolicy.startProxyOperation(clientId, code, attributionSource,
                             startIfModeDefault, shouldCollectAsyncNotedOp, message,
                             shouldCollectMessage, skipProxyOperation, proxyAttributionFlags,
                             proxiedAttributionFlags, attributionChainId,
                             AppOpsService.this::startProxyOperationImpl);
                 }
             } else if (mCheckOpsDelegate != null) {
-                return startDelegateProxyOperationImpl(code, attributionSource,
+                return startDelegateProxyOperationImpl(clientId, code, attributionSource,
                         startIfModeDefault, shouldCollectAsyncNotedOp, message,
                         shouldCollectMessage, skipProxyOperation, proxyAttributionFlags,
                         proxiedAttributionFlags, attributionChainId);
             }
-            return startProxyOperationImpl(code, attributionSource, startIfModeDefault,
+            return startProxyOperationImpl(clientId, code, attributionSource, startIfModeDefault,
                     shouldCollectAsyncNotedOp, message, shouldCollectMessage, skipProxyOperation,
                     proxyAttributionFlags, proxiedAttributionFlags, attributionChainId);
         }
 
-        private SyncNotedAppOp startDelegateProxyOperationImpl(int code,
+        private SyncNotedAppOp startDelegateProxyOperationImpl(@NonNull IBinder clientId, int code,
                 @NonNull AttributionSource attributionSource, boolean startIfModeDefault,
                 boolean shouldCollectAsyncNotedOp, String message, boolean shouldCollectMessage,
                 boolean skipProxyOperation, @AttributionFlags int proxyAttributionFlags,
                 @AttributionFlags int proxiedAttributionFlsgs, int attributionChainId) {
-            return mCheckOpsDelegate.startProxyOperation(code, attributionSource,
+            return mCheckOpsDelegate.startProxyOperation(clientId, code, attributionSource,
                     startIfModeDefault, shouldCollectAsyncNotedOp, message, shouldCollectMessage,
                     skipProxyOperation, proxyAttributionFlags, proxiedAttributionFlsgs,
                     attributionChainId, AppOpsService.this::startProxyOperationImpl);
@@ -7706,27 +7786,28 @@ public class AppOpsService extends IAppOpsService.Stub {
                     AppOpsService.this::finishOperationImpl);
         }
 
-        public void finishProxyOperation(int code,
+        public void finishProxyOperation(@NonNull IBinder clientId, int code,
                 @NonNull AttributionSource attributionSource, boolean skipProxyOperation) {
             if (mPolicy != null) {
                 if (mCheckOpsDelegate != null) {
-                    mPolicy.finishProxyOperation(code, attributionSource,
+                    mPolicy.finishProxyOperation(clientId, code, attributionSource,
                             skipProxyOperation, this::finishDelegateProxyOperationImpl);
                 } else {
-                    mPolicy.finishProxyOperation(code, attributionSource,
+                    mPolicy.finishProxyOperation(clientId, code, attributionSource,
                             skipProxyOperation, AppOpsService.this::finishProxyOperationImpl);
                 }
             } else if (mCheckOpsDelegate != null) {
-                finishDelegateProxyOperationImpl(code, attributionSource, skipProxyOperation);
+                finishDelegateProxyOperationImpl(clientId, code, attributionSource,
+                        skipProxyOperation);
             } else {
-                finishProxyOperationImpl(code, attributionSource, skipProxyOperation);
+                finishProxyOperationImpl(clientId, code, attributionSource, skipProxyOperation);
             }
         }
 
-        private Void finishDelegateProxyOperationImpl(int code,
+        private Void finishDelegateProxyOperationImpl(@NonNull IBinder clientId, int code,
                 @NonNull AttributionSource attributionSource, boolean skipProxyOperation) {
-            mCheckOpsDelegate.finishProxyOperation(code, attributionSource, skipProxyOperation,
-                    AppOpsService.this::finishProxyOperationImpl);
+            mCheckOpsDelegate.finishProxyOperation(clientId, code, attributionSource,
+                    skipProxyOperation, AppOpsService.this::finishProxyOperationImpl);
             return null;
         }
     }

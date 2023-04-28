@@ -37,37 +37,37 @@ public class ChooserMultiProfilePagerAdapter extends AbstractMultiProfilePagerAd
     private static final int SINGLE_CELL_SPAN_SIZE = 1;
 
     private final ChooserProfileDescriptor[] mItems;
-    private final boolean mIsSendAction;
     private int mBottomOffset;
     private int mMaxTargetsPerRow;
 
     ChooserMultiProfilePagerAdapter(Context context,
             ChooserActivity.ChooserGridAdapter adapter,
-            UserHandle personalProfileUserHandle,
+            EmptyStateProvider emptyStateProvider,
+            QuietModeManager quietModeManager,
             UserHandle workProfileUserHandle,
-            boolean isSendAction, int maxTargetsPerRow) {
-        super(context, /* currentPage */ 0, personalProfileUserHandle, workProfileUserHandle);
+            int maxTargetsPerRow) {
+        super(context, /* currentPage */ 0, emptyStateProvider, quietModeManager,
+                workProfileUserHandle);
         mItems = new ChooserProfileDescriptor[] {
                 createProfileDescriptor(adapter)
         };
-        mIsSendAction = isSendAction;
         mMaxTargetsPerRow = maxTargetsPerRow;
     }
 
     ChooserMultiProfilePagerAdapter(Context context,
             ChooserActivity.ChooserGridAdapter personalAdapter,
             ChooserActivity.ChooserGridAdapter workAdapter,
+            EmptyStateProvider emptyStateProvider,
+            QuietModeManager quietModeManager,
             @Profile int defaultProfile,
-            UserHandle personalProfileUserHandle,
             UserHandle workProfileUserHandle,
-            boolean isSendAction, int maxTargetsPerRow) {
-        super(context, /* currentPage */ defaultProfile, personalProfileUserHandle,
-                workProfileUserHandle);
+            int maxTargetsPerRow) {
+        super(context, /* currentPage */ defaultProfile, emptyStateProvider,
+                quietModeManager, workProfileUserHandle);
         mItems = new ChooserProfileDescriptor[] {
                 createProfileDescriptor(personalAdapter),
                 createProfileDescriptor(workAdapter)
         };
-        mIsSendAction = isSendAction;
         mMaxTargetsPerRow = maxTargetsPerRow;
     }
 
@@ -76,7 +76,15 @@ public class ChooserMultiProfilePagerAdapter extends AbstractMultiProfilePagerAd
         final LayoutInflater inflater = LayoutInflater.from(getContext());
         final ViewGroup rootView =
                 (ViewGroup) inflater.inflate(R.layout.chooser_list_per_profile, null, false);
-        return new ChooserProfileDescriptor(rootView, adapter);
+        ChooserProfileDescriptor profileDescriptor =
+                new ChooserProfileDescriptor(rootView, adapter);
+        profileDescriptor.recyclerView.setAccessibilityDelegateCompat(
+                new ChooserRecyclerViewAccessibilityDelegate(profileDescriptor.recyclerView));
+        return profileDescriptor;
+    }
+
+    public void setMaxTargetsPerRow(int maxTargetsPerRow) {
+        mMaxTargetsPerRow = maxTargetsPerRow;
     }
 
     RecyclerView getListViewForIndex(int index) {
@@ -172,68 +180,6 @@ public class ChooserMultiProfilePagerAdapter extends AbstractMultiProfilePagerAd
             return null;
         }
         return getListViewForIndex(1 - getCurrentPage());
-    }
-
-    @Override
-    String getMetricsCategory() {
-        return ResolverActivity.METRICS_CATEGORY_CHOOSER;
-    }
-
-    @Override
-    protected void showWorkProfileOffEmptyState(ResolverListAdapter activeListAdapter,
-            View.OnClickListener listener) {
-        showEmptyState(activeListAdapter,
-                R.drawable.ic_work_apps_off,
-                R.string.resolver_turn_on_work_apps,
-                /* subtitleRes */ 0,
-                listener);
-    }
-
-    @Override
-    protected void showNoPersonalToWorkIntentsEmptyState(ResolverListAdapter activeListAdapter) {
-        if (mIsSendAction) {
-            showEmptyState(activeListAdapter,
-                    R.drawable.ic_sharing_disabled,
-                    R.string.resolver_cross_profile_blocked,
-                    R.string.resolver_cant_share_with_work_apps_explanation);
-        } else {
-            showEmptyState(activeListAdapter,
-                    R.drawable.ic_sharing_disabled,
-                    R.string.resolver_cross_profile_blocked,
-                    R.string.resolver_cant_access_work_apps_explanation);
-        }
-    }
-
-    @Override
-    protected void showNoWorkToPersonalIntentsEmptyState(ResolverListAdapter activeListAdapter) {
-        if (mIsSendAction) {
-            showEmptyState(activeListAdapter,
-                    R.drawable.ic_sharing_disabled,
-                    R.string.resolver_cross_profile_blocked,
-                    R.string.resolver_cant_share_with_personal_apps_explanation);
-        } else {
-            showEmptyState(activeListAdapter,
-                    R.drawable.ic_sharing_disabled,
-                    R.string.resolver_cross_profile_blocked,
-                    R.string.resolver_cant_access_personal_apps_explanation);
-        }
-    }
-
-    @Override
-    protected void showNoPersonalAppsAvailableEmptyState(ResolverListAdapter listAdapter) {
-        showEmptyState(listAdapter,
-                R.drawable.ic_no_apps,
-                R.string.resolver_no_personal_apps_available,
-                /* subtitleRes */ 0);
-
-    }
-
-    @Override
-    protected void showNoWorkAppsAvailableEmptyState(ResolverListAdapter listAdapter) {
-        showEmptyState(listAdapter,
-                R.drawable.ic_no_apps,
-                R.string.resolver_no_work_apps_available,
-                /* subtitleRes */ 0);
     }
 
     void setEmptyStateBottomOffset(int bottomOffset) {

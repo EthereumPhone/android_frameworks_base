@@ -16,7 +16,7 @@
 
 package com.android.server.wm;
 
-import com.android.server.policy.WindowManagerPolicy.StartingSurface;
+import com.android.server.wm.StartingSurfaceController.StartingSurface;
 
 /**
  * Represents the model about how a starting window should be constructed.
@@ -37,6 +37,9 @@ public abstract class StartingData {
      * when the parent activity of starting window may be put in a partial area of the task.
      */
     Task mAssociatedTask;
+
+    /** Whether the starting window is drawn. */
+    boolean mIsDisplayed;
 
     protected StartingData(WindowManagerService service, int typeParams) {
         mService = service;

@@ -37,7 +37,6 @@ license {
     visibility: [":__subpackages__"],
     license_kinds: [
         "SPDX-license-identifier-Apache-2.0",
-        "SPDX-license-identifier-GPL",
     ],
     license_text: [
         "NOTICE",
@@ -131,6 +130,10 @@ android_app {
 
         // Allow overlay to add resource
         "--auto-add-overlay",
+
+        // Framework resources benefit tremendously from enabling sparse encoding, saving tens
+        // of MBs in size and RAM use.
+        "--enable-sparse-encoding",
     ],
 
     resource_zips: [

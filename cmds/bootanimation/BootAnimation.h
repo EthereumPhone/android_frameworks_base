@@ -30,6 +30,8 @@
 #include <utils/Thread.h>
 #include <binder/IBinder.h>
 
+#include <ui/Rotation.h>
+
 #include <EGL/egl.h>
 #include <GLES2/gl2.h>
 
@@ -161,7 +163,7 @@ private:
         void                addTimeDirWatch();
 
         int mInotifyFd;
-        int mSystemWd;
+        int mBootAnimWd;
         int mTimeWd;
         BootAnimation* mBootAnimation;
     };
@@ -200,6 +202,8 @@ private:
     ui::Size limitSurfaceSize(int width, int height) const;
     void resizeSurface(int newWidth, int newHeight);
     void projectSceneToWindow();
+    void rotateAwayFromNaturalOrientationIfNeeded();
+    ui::Rotation parseOrientationProperty();
 
     bool shouldStopPlayingPart(const Animation::Part& part, int fadedFramesCount,
                                int lastDisplayedProgress);
@@ -213,6 +217,8 @@ private:
     Texture     mAndroid[2];
     int         mWidth;
     int         mHeight;
+    int         mInitWidth;
+    int         mInitHeight;
     int         mMaxWidth = 0;
     int         mMaxHeight = 0;
     int         mCurrentInset;
@@ -228,6 +234,7 @@ private:
     bool        mTimeIsAccurate;
     bool        mTimeFormat12Hour;
     bool        mShuttingDown;
+    bool        mDynamicColorsApplied = false;
     String8     mZipFileName;
     SortedVector<String8> mLoadedFiles;
     sp<TimeCheckThread> mTimeCheckThread = nullptr;

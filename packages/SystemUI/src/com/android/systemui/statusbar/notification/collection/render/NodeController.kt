@@ -30,6 +30,7 @@ import java.lang.StringBuilder
  * below.
  */
 interface NodeController {
+
     /** A string that uniquely(ish) represents the node in the tree. Used for debugging. */
     val nodeLabel: String
 
@@ -41,17 +42,50 @@ interface NodeController {
 
     fun getChildCount(): Int = 0
 
+    /** Called to add a child to this view */
     fun addChildAt(child: NodeController, index: Int) {
         throw RuntimeException("Not supported")
     }
 
+    /** Called to move one of this view's current children to a new position */
     fun moveChildTo(child: NodeController, index: Int) {
         throw RuntimeException("Not supported")
     }
 
+    /** Called to remove one of this view's current children */
     fun removeChild(child: NodeController, isTransfer: Boolean) {
         throw RuntimeException("Not supported")
     }
+
+    /** Called when this view has been added */
+    fun onViewAdded() {}
+
+    /** Called when this view has been moved */
+    fun onViewMoved() {}
+
+    /** Called when this view has been removed */
+    fun onViewRemoved() {}
+
+    /**
+     * Called before removing a node from its parent
+     *
+     * If returned true, the ShadeViewDiffer won't detach this row and the view system is
+     * responsible for ensuring the row is in eventually removed from the parent.
+     *
+     * @return false to opt out from this feature
+     */
+    fun offerToKeepInParentForAnimation(): Boolean
+
+    /**
+     * Called before a node is reattached. Removes the view from its parent
+     * if it was flagged to be kept before.
+     *
+     * @return whether it did a removal
+     */
+    fun removeFromParentIfKeptForAnimation(): Boolean
+
+    /** Called when a node is being reattached */
+    fun resetKeepInParentForAnimation()
 }
 
 /**
@@ -78,7 +112,7 @@ fun treeSpecToStr(tree: NodeSpec): String {
 }
 
 private fun treeSpecToStrHelper(tree: NodeSpec, sb: StringBuilder, indent: String) {
-    sb.append("${indent}{${tree.controller.nodeLabel}}\n")
+    sb.append("$indent{${tree.controller.nodeLabel}}\n")
     if (tree.children.isNotEmpty()) {
         val childIndent = "$indent  "
         for (child in tree.children) {

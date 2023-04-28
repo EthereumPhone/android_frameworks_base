@@ -16,7 +16,10 @@
 
 package com.android.internal.app;
 
-import static org.mockito.Mockito.mock;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyInt;
+import static org.mockito.Mockito.doAnswer;
+import static org.mockito.Mockito.spy;
 import static org.mockito.Mockito.when;
 
 import android.annotation.Nullable;
@@ -32,8 +35,11 @@ import android.database.Cursor;
 import android.graphics.Bitmap;
 import android.net.Uri;
 import android.os.UserHandle;
+import android.util.Pair;
 import android.util.Size;
 
+import com.android.internal.app.AbstractMultiProfilePagerAdapter.CrossProfileIntentsChecker;
+import com.android.internal.app.AbstractMultiProfilePagerAdapter.MyUserIdProvider;
 import com.android.internal.app.ResolverListAdapter.ResolveInfoPresentationGetter;
 import com.android.internal.app.chooser.DisplayResolveInfo;
 import com.android.internal.app.chooser.TargetInfo;
@@ -41,22 +47,22 @@ import com.android.internal.logging.MetricsLogger;
 import com.android.internal.logging.nano.MetricsProto.MetricsEvent;
 
 import java.util.List;
-import java.util.function.Function;
 
-public class ChooserWrapperActivity extends ChooserActivity {
-    /*
-     * Simple wrapper around chooser activity to be able to initiate it under test
-     */
-    static final OverrideData sOverrides = new OverrideData();
+/**
+ * Simple wrapper around chooser activity to be able to initiate it under test with overrides
+ * specified in the {@code ChooserActivityOverrideData} singleton. This should be copy-and-pasted
+ * verbatim to test other {@code ChooserActivity} subclasses (updating only the `extends` to match
+ * the concrete activity under test).
+ */
+public class ChooserWrapperActivity extends ChooserActivity implements IChooserWrapper {
+    static final ChooserActivityOverrideData sOverrides = ChooserActivityOverrideData.getInstance();
     private UsageStatsManager mUsm;
 
+    // ResolverActivity (the base class of ChooserActivity) inspects the launched-from UID at
+    // onCreate and needs to see some non-negative value in the test.
     @Override
-    protected AbstractMultiProfilePagerAdapter createMultiProfilePagerAdapter(
-            Intent[] initialIntents, List<ResolveInfo> rList, boolean filterLastUsed) {
-        AbstractMultiProfilePagerAdapter multiProfilePagerAdapter =
-                super.createMultiProfilePagerAdapter(initialIntents, rList, filterLastUsed);
-        multiProfilePagerAdapter.setInjector(sOverrides.multiPagerAdapterInjector);
-        return multiProfilePagerAdapter;
+    public int getLaunchedFromUid() {
+        return 1234;
     }
 
     @Override
@@ -72,16 +78,19 @@ public class ChooserWrapperActivity extends ChooserActivity {
                 getChooserActivityLogger());
     }
 
-    ChooserListAdapter getAdapter() {
+    @Override
+    public ChooserListAdapter getAdapter() {
         return mChooserMultiProfilePagerAdapter.getActiveListAdapter();
     }
 
-    ChooserListAdapter getPersonalListAdapter() {
+    @Override
+    public ChooserListAdapter getPersonalListAdapter() {
         return ((ChooserGridAdapter) mMultiProfilePagerAdapter.getAdapterForIndex(0))
                 .getListAdapter();
     }
 
-    ChooserListAdapter getWorkListAdapter() {
+    @Override
+    public ChooserListAdapter getWorkListAdapter() {
         if (mMultiProfilePagerAdapter.getInactiveListAdapter() == null) {
             return null;
         }
@@ -89,7 +98,10 @@ public class ChooserWrapperActivity extends ChooserActivity {
                 .getListAdapter();
     }
 
-    boolean getIsSelected() { return mIsSuccessfullySelected; }
+    @Override
+    public boolean getIsSelected() {
+        return mIsSuccessfullySelected;
+    }
 
     @Override
     protected ComponentName getNearbySharingComponent() {
@@ -103,7 +115,8 @@ public class ChooserWrapperActivity extends ChooserActivity {
         return new ChooserWrapperActivity.EmptyTargetInfo();
     }
 
-    UsageStatsManager getUsageStatsManager() {
+    @Override
+    public UsageStatsManager getUsageStatsManager() {
         if (mUsm == null) {
             mUsm = (UsageStatsManager) getSystemService(Context.USAGE_STATS_SERVICE);
         }
@@ -116,6 +129,30 @@ public class ChooserWrapperActivity extends ChooserActivity {
             return sOverrides.isVoiceInteraction;
         }
         return super.isVoiceInteraction();
+    }
+
+    @Override
+    protected MyUserIdProvider createMyUserIdProvider() {
+        if (sOverrides.mMyUserIdProvider != null) {
+            return sOverrides.mMyUserIdProvider;
+        }
+        return super.createMyUserIdProvider();
+    }
+
+    @Override
+    protected CrossProfileIntentsChecker createCrossProfileIntentsChecker() {
+        if (sOverrides.mCrossProfileIntentsChecker != null) {
+            return sOverrides.mCrossProfileIntentsChecker;
+        }
+        return super.createCrossProfileIntentsChecker();
+    }
+
+    @Override
+    protected AbstractMultiProfilePagerAdapter.QuietModeManager createQuietModeManager() {
+        if (sOverrides.mQuietModeManager != null) {
+            return sOverrides.mQuietModeManager;
+        }
+        return super.createQuietModeManager();
     }
 
     @Override
@@ -172,7 +209,7 @@ public class ChooserWrapperActivity extends ChooserActivity {
     }
 
     @Override
-    protected ChooserActivityLogger getChooserActivityLogger() {
+    public ChooserActivityLogger getChooserActivityLogger() {
         return sOverrides.chooserActivityLogger;
     }
 
@@ -197,6 +234,7 @@ public class ChooserWrapperActivity extends ChooserActivity {
         return super.isWorkProfile();
     }
 
+    @Override
     public DisplayResolveInfo createTestDisplayResolveInfo(Intent originalIntent, ResolveInfo pri,
             CharSequence pLabel, CharSequence pInfo, Intent replacementIntent,
             @Nullable ResolveInfoPresentationGetter resolveInfoPresentationGetter) {
@@ -209,7 +247,8 @@ public class ChooserWrapperActivity extends ChooserActivity {
         return sOverrides.workProfileUserHandle;
     }
 
-    protected UserHandle getCurrentUserHandle() {
+    @Override
+    public UserHandle getCurrentUserHandle() {
         return mMultiProfilePagerAdapter.getCurrentUserHandle();
     }
 
@@ -222,18 +261,16 @@ public class ChooserWrapperActivity extends ChooserActivity {
     @Override
     protected void queryDirectShareTargets(ChooserListAdapter adapter,
             boolean skipAppPredictionService) {
+        if (sOverrides.directShareTargets != null) {
+            Pair<Integer, ServiceResultInfo[]> result =
+                    sOverrides.directShareTargets.apply(this, adapter);
+            sendShortcutManagerShareTargetResults(result.first, result.second);
+            return;
+        }
         if (sOverrides.onQueryDirectShareTargets != null) {
             sOverrides.onQueryDirectShareTargets.apply(adapter);
         }
         super.queryDirectShareTargets(adapter, skipAppPredictionService);
-    }
-
-    @Override
-    protected void queryTargetServices(ChooserListAdapter adapter) {
-        if (sOverrides.onQueryTargetServices != null) {
-            sOverrides.onQueryTargetServices.apply(adapter);
-        }
-        super.queryTargetServices(adapter);
     }
 
     @Override
@@ -255,78 +292,5 @@ public class ChooserWrapperActivity extends ChooserActivity {
             return super.isUserUnlocked(userHandle);
         }
         return sOverrides.isWorkProfileUserUnlocked;
-    }
-
-    /**
-     * We cannot directly mock the activity created since instrumentation creates it.
-     * <p>
-     * Instead, we use static instances of this object to modify behavior.
-     */
-    static class OverrideData {
-        @SuppressWarnings("Since15")
-        public Function<PackageManager, PackageManager> createPackageManager;
-        public Function<TargetInfo, Boolean> onSafelyStartCallback;
-        public Function<ChooserListAdapter, Void> onQueryDirectShareTargets;
-        public Function<ChooserListAdapter, Void> onQueryTargetServices;
-        public ResolverListController resolverListController;
-        public ResolverListController workResolverListController;
-        public Boolean isVoiceInteraction;
-        public boolean isImageType;
-        public Cursor resolverCursor;
-        public boolean resolverForceException;
-        public Bitmap previewThumbnail;
-        public MetricsLogger metricsLogger;
-        public ChooserActivityLogger chooserActivityLogger;
-        public int alternateProfileSetting;
-        public Resources resources;
-        public UserHandle workProfileUserHandle;
-        public boolean hasCrossProfileIntents;
-        public boolean isQuietModeEnabled;
-        public boolean isWorkProfileUserRunning;
-        public boolean isWorkProfileUserUnlocked;
-        public AbstractMultiProfilePagerAdapter.Injector multiPagerAdapterInjector;
-        public PackageManager packageManager;
-
-        public void reset() {
-            onSafelyStartCallback = null;
-            onQueryDirectShareTargets = null;
-            onQueryTargetServices = null;
-            isVoiceInteraction = null;
-            createPackageManager = null;
-            previewThumbnail = null;
-            isImageType = false;
-            resolverCursor = null;
-            resolverForceException = false;
-            resolverListController = mock(ResolverListController.class);
-            workResolverListController = mock(ResolverListController.class);
-            metricsLogger = mock(MetricsLogger.class);
-            chooserActivityLogger = new ChooserActivityLoggerFake();
-            alternateProfileSetting = 0;
-            resources = null;
-            workProfileUserHandle = null;
-            hasCrossProfileIntents = true;
-            isQuietModeEnabled = false;
-            isWorkProfileUserRunning = true;
-            isWorkProfileUserUnlocked = true;
-            packageManager = null;
-            multiPagerAdapterInjector = new AbstractMultiProfilePagerAdapter.Injector() {
-                @Override
-                public boolean hasCrossProfileIntents(List<Intent> intents, int sourceUserId,
-                        int targetUserId) {
-                    return hasCrossProfileIntents;
-                }
-
-                @Override
-                public boolean isQuietModeEnabled(UserHandle workProfileUserHandle) {
-                    return isQuietModeEnabled;
-                }
-
-                @Override
-                public void requestQuietModeEnabled(boolean enabled,
-                        UserHandle workProfileUserHandle) {
-                    isQuietModeEnabled = enabled;
-                }
-            };
-        }
     }
 }

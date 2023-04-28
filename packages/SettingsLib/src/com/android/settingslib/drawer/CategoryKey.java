@@ -38,6 +38,8 @@ public final class CategoryKey {
     public static final String CATEGORY_SECURITY = "com.android.settings.category.ia.security";
     public static final String CATEGORY_SECURITY_LOCKSCREEN =
             "com.android.settings.category.ia.lockscreen";
+    public static final String CATEGORY_SECURITY_ADVANCED_SETTINGS =
+            "com.android.settings.category.ia.advanced_security";
     public static final String CATEGORY_ACCOUNT = "com.android.settings.category.ia.accounts";
     public static final String CATEGORY_ACCOUNT_DETAIL =
             "com.android.settings.category.ia.account_detail";
@@ -64,6 +66,8 @@ public final class CategoryKey {
             "com.android.settings.category.ia.battery_saver_settings";
     public static final String CATEGORY_SMART_BATTERY_SETTINGS =
             "com.android.settings.category.ia.smart_battery_settings";
+    public static final String CATEGORY_COMMUNAL_SETTINGS =
+            "com.android.settings.category.ia.communal";
 
     public static final Map<String, String> KEY_COMPAT_MAP;
 

@@ -21,29 +21,29 @@ import android.content.res.Configuration;
 import android.os.Handler;
 import android.util.Log;
 
+import com.android.systemui.CoreStartable;
 import com.android.systemui.R;
-import com.android.systemui.SystemUI;
 import com.android.systemui.dagger.SysUISingleton;
 import com.android.systemui.qs.tiles.DndTile;
 
-import java.io.FileDescriptor;
 import java.io.PrintWriter;
 
 import javax.inject.Inject;
 
 @SysUISingleton
-public class VolumeUI extends SystemUI {
+public class VolumeUI implements CoreStartable {
     private static final String TAG = "VolumeUI";
     private static boolean LOGD = Log.isLoggable(TAG, Log.DEBUG);
 
     private final Handler mHandler = new Handler();
 
     private boolean mEnabled;
+    private final Context mContext;
     private VolumeDialogComponent mVolumeComponent;
 
     @Inject
     public VolumeUI(Context context, VolumeDialogComponent volumeDialogComponent) {
-        super(context);
+        mContext = context;
         mVolumeComponent = volumeDialogComponent;
     }
 
@@ -60,17 +60,16 @@ public class VolumeUI extends SystemUI {
     }
 
     @Override
-    protected void onConfigurationChanged(Configuration newConfig) {
-        super.onConfigurationChanged(newConfig);
+    public void onConfigurationChanged(Configuration newConfig) {
         if (!mEnabled) return;
         mVolumeComponent.onConfigurationChanged(newConfig);
     }
 
     @Override
-    public void dump(FileDescriptor fd, PrintWriter pw, String[] args) {
+    public void dump(PrintWriter pw, String[] args) {
         pw.print("mEnabled="); pw.println(mEnabled);
         if (!mEnabled) return;
-        mVolumeComponent.dump(fd, pw, args);
+        mVolumeComponent.dump(pw, args);
     }
 
     private void setDefaultVolumeController() {

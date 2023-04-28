@@ -57,6 +57,7 @@ public class SystemBackupAgent extends BackupAgentHelper {
     private static final String ACCOUNT_MANAGER_HELPER = "account_manager";
     private static final String SLICES_HELPER = "slices";
     private static final String PEOPLE_HELPER = "people";
+    private static final String APP_LOCALES_HELPER = "app_locales";
     private static final String NETWORK_POLICY_HELPER = "network_policy";
 
     // These paths must match what the WallpaperManagerService uses.  The leaf *_FILENAME
@@ -84,7 +85,8 @@ public class SystemBackupAgent extends BackupAgentHelper {
     private static final String WALLPAPER_IMAGE_KEY = WallpaperBackupHelper.WALLPAPER_IMAGE_KEY;
 
     private static final Set<String> sEligibleForMultiUser = Sets.newArraySet(
-            PERMISSION_HELPER, NOTIFICATION_HELPER, SYNC_SETTINGS_HELPER, NETWORK_POLICY_HELPER);
+            PERMISSION_HELPER, NOTIFICATION_HELPER, SYNC_SETTINGS_HELPER, APP_LOCALES_HELPER,
+            NETWORK_POLICY_HELPER);
 
     private int mUserId = UserHandle.USER_SYSTEM;
 
@@ -103,6 +105,7 @@ public class SystemBackupAgent extends BackupAgentHelper {
         addHelper(ACCOUNT_MANAGER_HELPER, new AccountManagerBackupHelper());
         addHelper(SLICES_HELPER, new SliceBackupHelper(this));
         addHelper(PEOPLE_HELPER, new PeopleBackupHelper(mUserId));
+        addHelper(APP_LOCALES_HELPER, new AppSpecificLocalesBackupHelper(mUserId));
         addHelper(NETWORK_POLICY_HELPER, new NetworkPolicyBackupHelper(mUserId));
     }
 

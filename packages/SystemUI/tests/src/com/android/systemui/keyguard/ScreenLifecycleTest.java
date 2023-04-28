@@ -57,6 +57,7 @@ public class ScreenLifecycleTest extends SysuiTestCase {
 
     @Test
     public void screenTurningOn() throws Exception {
+        Runnable onDrawn = () -> {};
         mScreen.dispatchScreenTurningOn();
 
         assertEquals(ScreenLifecycle.SCREEN_TURNING_ON, mScreen.getScreenState());
@@ -95,6 +96,6 @@ public class ScreenLifecycleTest extends SysuiTestCase {
 
     @Test
     public void dump() throws Exception {
-        mScreen.dump(null, new PrintWriter(new ByteArrayOutputStream()), new String[0]);
+        mScreen.dump(new PrintWriter(new ByteArrayOutputStream()), new String[0]);
     }
 }

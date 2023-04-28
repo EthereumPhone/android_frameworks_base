@@ -21,6 +21,7 @@ cc_binary_host {
     cflags: [
         "-Wall",
         "-Werror",
+        "-Wextra",
     ],
 
     static_libs: [
@@ -31,8 +32,11 @@ cc_binary_host {
         "liblog",
         "libui-types",
     ],
+    shared_libs: [
+        "libvintf",
+    ],
     target: {
-        linux_glibc: {
+        host_linux: {
             static_libs: [
                 // libbinder is only available for linux
                 "libbinder",

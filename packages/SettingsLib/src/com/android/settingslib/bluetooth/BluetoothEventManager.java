@@ -22,6 +22,7 @@ import android.bluetooth.BluetoothCodecStatus;
 import android.bluetooth.BluetoothDevice;
 import android.bluetooth.BluetoothHeadset;
 import android.bluetooth.BluetoothHearingAid;
+import android.bluetooth.BluetoothLeAudio;
 import android.bluetooth.BluetoothProfile;
 import android.bluetooth.BluetoothVcp;
 import android.content.BroadcastReceiver;
@@ -32,6 +33,7 @@ import android.os.UserHandle;
 import android.telephony.TelephonyManager;
 import android.util.Log;
 
+import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
 import androidx.annotation.VisibleForTesting;
 
@@ -124,6 +126,8 @@ public class BluetoothEventManager {
         addHandler(BluetoothHeadset.ACTION_ACTIVE_DEVICE_CHANGED, new ActiveDeviceChangedHandler());
         addHandler(BluetoothHearingAid.ACTION_ACTIVE_DEVICE_CHANGED,
                 new ActiveDeviceChangedHandler());
+        addHandler(BluetoothLeAudio.ACTION_LE_AUDIO_ACTIVE_DEVICE_CHANGED,
+                   new ActiveDeviceChangedHandler());
 
         // Headset state changed broadcasts
         addHandler(BluetoothHeadset.ACTION_AUDIO_STATE_CHANGED,
@@ -192,10 +196,12 @@ public class BluetoothEventManager {
     private void registerIntentReceiver(BroadcastReceiver receiver, IntentFilter filter) {
         if (mUserHandle == null) {
             // If userHandle has not been provided, simply call registerReceiver.
-            mContext.registerReceiver(receiver, filter, null, mReceiverHandler);
+            mContext.registerReceiver(receiver, filter, null, mReceiverHandler,
+                    Context.RECEIVER_EXPORTED);
         } else {
             // userHandle was explicitly specified, so need to call multi-user aware API.
-            mContext.registerReceiverAsUser(receiver, mUserHandle, filter, null, mReceiverHandler);
+            mContext.registerReceiverAsUser(receiver, mUserHandle, filter, null, mReceiverHandler,
+                    Context.RECEIVER_EXPORTED);
         }
     }
 
@@ -223,19 +229,19 @@ public class BluetoothEventManager {
         return deviceAdded;
     }
 
-    void dispatchDeviceAdded(CachedBluetoothDevice cachedDevice) {
+    void dispatchDeviceAdded(@NonNull CachedBluetoothDevice cachedDevice) {
         for (BluetoothCallback callback : mCallbacks) {
             callback.onDeviceAdded(cachedDevice);
         }
     }
 
-    void dispatchDeviceRemoved(CachedBluetoothDevice cachedDevice) {
+    void dispatchDeviceRemoved(@NonNull CachedBluetoothDevice cachedDevice) {
         for (BluetoothCallback callback : mCallbacks) {
             callback.onDeviceDeleted(cachedDevice);
         }
     }
 
-    void dispatchProfileConnectionStateChanged(CachedBluetoothDevice device, int state,
+    void dispatchProfileConnectionStateChanged(@NonNull CachedBluetoothDevice device, int state,
             int bluetoothProfile) {
         for (BluetoothCallback callback : mCallbacks) {
             callback.onProfileConnectionStateChanged(device, state, bluetoothProfile);
@@ -270,10 +276,26 @@ public class BluetoothEventManager {
     }
 
     @VisibleForTesting
-    void dispatchActiveDeviceChanged(CachedBluetoothDevice activeDevice,
+    void dispatchActiveDeviceChanged(
+            @Nullable CachedBluetoothDevice activeDevice,
             int bluetoothProfile) {
         for (CachedBluetoothDevice cachedDevice : mDeviceManager.getCachedDevicesCopy()) {
+            Set<CachedBluetoothDevice> memberSet = cachedDevice.getMemberDevice();
             boolean isActive = Objects.equals(cachedDevice, activeDevice);
+            if (!isActive && !memberSet.isEmpty()) {
+                for (CachedBluetoothDevice memberCachedDevice : memberSet) {
+                    isActive = Objects.equals(memberCachedDevice, activeDevice);
+                    if (isActive) {
+                        Log.d(TAG,
+                                "The active device is the member device "
+                                        + activeDevice.getDevice().getAnonymizedAddress()
+                                        + ". change activeDevice as main device "
+                                        + cachedDevice.getDevice().getAnonymizedAddress());
+                        activeDevice = cachedDevice;
+                        break;
+                    }
+                }
+            }
             cachedDevice.onActiveDeviceChanged(isActive, bluetoothProfile);
         }
         for (BluetoothCallback callback : mCallbacks) {
@@ -281,7 +303,7 @@ public class BluetoothEventManager {
         }
     }
 
-    private void dispatchAclStateChanged(CachedBluetoothDevice activeDevice, int state) {
+    private void dispatchAclStateChanged(@NonNull CachedBluetoothDevice activeDevice, int state) {
         for (BluetoothCallback callback : mCallbacks) {
             callback.onAclConnectionStateChanged(activeDevice, state);
         }
@@ -369,12 +391,15 @@ public class BluetoothEventManager {
                 BluetoothDevice device) {
             short rssi = intent.getShortExtra(BluetoothDevice.EXTRA_RSSI, Short.MIN_VALUE);
             String name = intent.getStringExtra(BluetoothDevice.EXTRA_NAME);
+            final boolean isCoordinatedSetMember =
+                    intent.getBooleanExtra(BluetoothDevice.EXTRA_IS_COORDINATED_SET_MEMBER, false);
             // TODO Pick up UUID. They should be available for 2.1 devices.
             // Skip for now, there's a bluez problem and we are not getting uuids even for 2.1.
             CachedBluetoothDevice cachedDevice = mDeviceManager.findDevice(device);
             if (cachedDevice == null) {
                 cachedDevice = mDeviceManager.addDevice(device);
-                Log.d(TAG, "DeviceFoundHandler created new CachedBluetoothDevice");
+                Log.d(TAG, "DeviceFoundHandler created new CachedBluetoothDevice "
+                        + cachedDevice.getDevice().getAnonymizedAddress());
             } else if (cachedDevice.getBondState() == BluetoothDevice.BOND_BONDED
                     && !cachedDevice.getDevice().isConnected()) {
                 // Dispatch device add callback to show bonded but
@@ -383,6 +408,7 @@ public class BluetoothEventManager {
             }
             cachedDevice.setRssi(rssi);
             cachedDevice.setJustDiscovered(true);
+            cachedDevice.setIsCoordinatedSetMember(isCoordinatedSetMember);
         }
     }
 
@@ -427,6 +453,12 @@ public class BluetoothEventManager {
             }
             int bondState = intent.getIntExtra(BluetoothDevice.EXTRA_BOND_STATE,
                     BluetoothDevice.ERROR);
+
+            if (mDeviceManager.onBondStateChangedIfProcess(device, bondState)) {
+                Log.d(TAG, "Should not update UI for the set member");
+                return;
+            }
+
             CachedBluetoothDevice cachedDevice = mDeviceManager.findDevice(device);
             if (cachedDevice == null) {
                 Log.w(TAG, "Got bonding state changed for " + device +
@@ -455,11 +487,19 @@ public class BluetoothEventManager {
             cachedDevice.onBondingStateChanged(bondState);
 
             if (bondState == BluetoothDevice.BOND_NONE) {
-                /* Check if we need to remove other Hearing Aid devices */
-                if (cachedDevice.getHiSyncId() != BluetoothHearingAid.HI_SYNC_ID_INVALID) {
+                // Check if we need to remove other Coordinated set member devices / Hearing Aid
+                // devices
+                if (DEBUG) {
+                    Log.d(TAG, "BondStateChangedHandler: cachedDevice.getGroupId() = "
+                            + cachedDevice.getGroupId() + ", cachedDevice.getHiSyncId()= "
+                            + cachedDevice.getHiSyncId());
+                }
+                if (cachedDevice.getGroupId() != BluetoothCsipSetCoordinator.GROUP_ID_INVALID
+                        || cachedDevice.getHiSyncId() != BluetoothHearingAid.HI_SYNC_ID_INVALID) {
+                    Log.d(TAG, "BondStateChangedHandler: Start onDeviceUnpaired");
                     mDeviceManager.onDeviceUnpaired(cachedDevice);
                 }
-                int reason = intent.getIntExtra(BluetoothDevice.EXTRA_REASON,
+                int reason = intent.getIntExtra(BluetoothDevice.EXTRA_UNBOND_REASON,
                         BluetoothDevice.ERROR);
 
                 showUnbondMessage(context, cachedDevice.getName(), reason);
@@ -556,6 +596,7 @@ public class BluetoothEventManager {
                 Log.w(TAG, "ActiveDeviceChangedHandler: action is null");
                 return;
             }
+            @Nullable
             CachedBluetoothDevice activeDevice = mDeviceManager.findDevice(device);
             int bluetoothProfile = 0;
             if (Objects.equals(action, BluetoothA2dp.ACTION_ACTIVE_DEVICE_CHANGED)) {
@@ -564,6 +605,9 @@ public class BluetoothEventManager {
                 bluetoothProfile = BluetoothProfile.HEADSET;
             } else if (Objects.equals(action, BluetoothHearingAid.ACTION_ACTIVE_DEVICE_CHANGED)) {
                 bluetoothProfile = BluetoothProfile.HEARING_AID;
+            } else if (Objects.equals(action,
+                        BluetoothLeAudio.ACTION_LE_AUDIO_ACTIVE_DEVICE_CHANGED)) {
+                bluetoothProfile = BluetoothProfile.LE_AUDIO;
             } else {
                 Log.w(TAG, "ActiveDeviceChangedHandler: unknown action " + action);
                 return;

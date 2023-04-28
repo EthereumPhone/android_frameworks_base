@@ -39,20 +39,21 @@ import android.text.format.DateUtils;
 import android.util.Log;
 import android.util.Slog;
 
+import androidx.annotation.NonNull;
+
 import com.android.internal.annotations.VisibleForTesting;
 import com.android.settingslib.fuelgauge.Estimate;
 import com.android.settingslib.utils.ThreadUtils;
-import com.android.systemui.Dependency;
+import com.android.systemui.CoreStartable;
 import com.android.systemui.R;
-import com.android.systemui.SystemUI;
 import com.android.systemui.broadcast.BroadcastDispatcher;
 import com.android.systemui.dagger.SysUISingleton;
+import com.android.systemui.keyguard.WakefulnessLifecycle;
+import com.android.systemui.settings.UserTracker;
 import com.android.systemui.statusbar.CommandQueue;
-import com.android.systemui.statusbar.phone.StatusBar;
+import com.android.systemui.statusbar.phone.CentralSurfaces;
 
-import java.io.FileDescriptor;
 import java.io.PrintWriter;
-import java.time.Duration;
 import java.util.Arrays;
 import java.util.Optional;
 import java.util.concurrent.Future;
@@ -62,7 +63,7 @@ import javax.inject.Inject;
 import dagger.Lazy;
 
 @SysUISingleton
-public class PowerUI extends SystemUI implements CommandQueue.Callbacks {
+public class PowerUI implements CoreStartable, CommandQueue.Callbacks {
 
     static final String TAG = "PowerUI";
     static final boolean DEBUG = Log.isLoggable(TAG, Log.DEBUG);
@@ -70,8 +71,7 @@ public class PowerUI extends SystemUI implements CommandQueue.Callbacks {
     private static final long TEMPERATURE_LOGGING_INTERVAL = DateUtils.HOUR_IN_MILLIS;
     private static final int MAX_RECENT_TEMPS = 125; // TEMPERATURE_LOGGING_INTERVAL plus a buffer
     static final long THREE_HOURS_IN_MILLIS = DateUtils.HOUR_IN_MILLIS * 3;
-    private static final int CHARGE_CYCLE_PERCENT_RESET = 45;
-    private static final long SIX_HOURS_MILLIS = Duration.ofHours(6).toMillis();
+    private static final int CHARGE_CYCLE_PERCENT_RESET = 30;
     public static final int NO_ESTIMATE_AVAILABLE = -1;
     private static final String BOOT_COUNT_KEY = "boot_count";
     private static final String PREFS = "powerui_prefs";
@@ -80,13 +80,15 @@ public class PowerUI extends SystemUI implements CommandQueue.Callbacks {
     @VisibleForTesting
     final Receiver mReceiver = new Receiver();
 
-    private PowerManager mPowerManager;
-    private WarningsUI mWarnings;
+    private final PowerManager mPowerManager;
+    private final WarningsUI mWarnings;
+    private final WakefulnessLifecycle mWakefulnessLifecycle;
+    private final UserTracker mUserTracker;
     private InattentiveSleepWarningView mOverlayView;
     private final Configuration mLastConfiguration = new Configuration();
     private int mPlugType = 0;
     private int mInvalidCharger = 0;
-    private EnhancedEstimates mEnhancedEstimates;
+    private final EnhancedEstimates mEnhancedEstimates;
     private Future mLastShowWarningTask;
     private boolean mEnableSkinTemperatureWarning;
     private boolean mEnableUsbTemperatureAlarm;
@@ -107,24 +109,51 @@ public class PowerUI extends SystemUI implements CommandQueue.Callbacks {
 
     private IThermalEventListener mSkinThermalEventListener;
     private IThermalEventListener mUsbThermalEventListener;
+    private final Context mContext;
     private final BroadcastDispatcher mBroadcastDispatcher;
     private final CommandQueue mCommandQueue;
-    private final Lazy<Optional<StatusBar>> mStatusBarOptionalLazy;
+    private final Lazy<Optional<CentralSurfaces>> mCentralSurfacesOptionalLazy;
+    private final WakefulnessLifecycle.Observer mWakefulnessObserver =
+            new WakefulnessLifecycle.Observer() {
+                @Override
+                public void onStartedWakingUp() {
+                    mScreenOffTime = -1;
+                }
+
+                @Override
+                public void onFinishedGoingToSleep() {
+                    mScreenOffTime = SystemClock.elapsedRealtime();
+                }
+            };
+
+    private final UserTracker.Callback mUserChangedCallback =
+            new UserTracker.Callback() {
+                @Override
+                public void onUserChanged(int newUser, @NonNull Context userContext) {
+                    mWarnings.userSwitched();
+                }
+            };
 
     @Inject
     public PowerUI(Context context, BroadcastDispatcher broadcastDispatcher,
-            CommandQueue commandQueue, Lazy<Optional<StatusBar>> statusBarOptionalLazy) {
-        super(context);
+            CommandQueue commandQueue, Lazy<Optional<CentralSurfaces>> centralSurfacesOptionalLazy,
+            WarningsUI warningsUI, EnhancedEstimates enhancedEstimates,
+            WakefulnessLifecycle wakefulnessLifecycle,
+            PowerManager powerManager,
+            UserTracker userTracker) {
+        mContext = context;
         mBroadcastDispatcher = broadcastDispatcher;
         mCommandQueue = commandQueue;
-        mStatusBarOptionalLazy = statusBarOptionalLazy;
+        mCentralSurfacesOptionalLazy = centralSurfacesOptionalLazy;
+        mWarnings = warningsUI;
+        mEnhancedEstimates = enhancedEstimates;
+        mPowerManager = powerManager;
+        mWakefulnessLifecycle = wakefulnessLifecycle;
+        mUserTracker = userTracker;
     }
 
     public void start() {
-        mPowerManager = (PowerManager) mContext.getSystemService(Context.POWER_SERVICE);
         mScreenOffTime = mPowerManager.isScreenOn() ? -1 : SystemClock.elapsedRealtime();
-        mWarnings = Dependency.get(WarningsUI.class);
-        mEnhancedEstimates = Dependency.get(EnhancedEstimates.class);
         mLastConfiguration.setTo(mContext.getResources().getConfiguration());
 
         ContentObserver obs = new ContentObserver(mHandler) {
@@ -139,6 +168,8 @@ public class PowerUI extends SystemUI implements CommandQueue.Callbacks {
                 false, obs, UserHandle.USER_ALL);
         updateBatteryWarningLevels();
         mReceiver.init();
+        mUserTracker.addCallback(mUserChangedCallback, mContext.getMainExecutor());
+        mWakefulnessLifecycle.addObserver(mWakefulnessObserver);
 
         // Check to see if we need to let the user know that the phone previously shut down due
         // to the temperature being too high.
@@ -171,7 +202,7 @@ public class PowerUI extends SystemUI implements CommandQueue.Callbacks {
     }
 
     @Override
-    protected void onConfigurationChanged(Configuration newConfig) {
+    public void onConfigurationChanged(Configuration newConfig) {
         final int mask = ActivityInfo.CONFIG_MCC | ActivityInfo.CONFIG_MNC;
 
         // Safe to modify mLastConfiguration here as it's only updated by the main thread (here).
@@ -205,7 +236,8 @@ public class PowerUI extends SystemUI implements CommandQueue.Callbacks {
      *
      * 1 means that the battery is "ok"
      * 0 means that the battery is between "ok" and what we should warn about.
-     * less than 0 means that the battery is low
+     * less than 0 means that the battery is low, -1 means the battery is reaching warning level,
+     * -2 means the battery is reaching severe level.
      */
     private int findBatteryLevelBucket(int level) {
         if (level >= mLowBatteryAlertCloseLevel) {
@@ -233,9 +265,6 @@ public class PowerUI extends SystemUI implements CommandQueue.Callbacks {
             IntentFilter filter = new IntentFilter();
             filter.addAction(PowerManager.ACTION_POWER_SAVE_MODE_CHANGED);
             filter.addAction(Intent.ACTION_BATTERY_CHANGED);
-            filter.addAction(Intent.ACTION_SCREEN_OFF);
-            filter.addAction(Intent.ACTION_SCREEN_ON);
-            filter.addAction(Intent.ACTION_USER_SWITCHED);
             mBroadcastDispatcher.registerReceiverWithHandler(this, filter, mHandler);
             // Force get initial values. Relying on Sticky behavior until API for getting info.
             if (!mHasReceivedBattery) {
@@ -317,12 +346,6 @@ public class PowerUI extends SystemUI implements CommandQueue.Callbacks {
                             plugged, bucket);
                 });
 
-            } else if (Intent.ACTION_SCREEN_OFF.equals(action)) {
-                mScreenOffTime = SystemClock.elapsedRealtime();
-            } else if (Intent.ACTION_SCREEN_ON.equals(action)) {
-                mScreenOffTime = -1;
-            } else if (Intent.ACTION_USER_SWITCHED.equals(action)) {
-                mWarnings.userSwitched();
             } else {
                 Slog.w(TAG, "unknown intent: " + intent);
             }
@@ -360,11 +383,7 @@ public class PowerUI extends SystemUI implements CommandQueue.Callbacks {
         }
 
         mWarnings.updateSnapshot(mCurrentBatteryStateSnapshot);
-        if (mCurrentBatteryStateSnapshot.isHybrid()) {
-            maybeShowHybridWarning(mCurrentBatteryStateSnapshot, mLastBatteryStateSnapshot);
-        } else {
-            maybeShowBatteryWarning(mCurrentBatteryStateSnapshot, mLastBatteryStateSnapshot);
-        }
+        maybeShowHybridWarning(mCurrentBatteryStateSnapshot, mLastBatteryStateSnapshot);
     }
 
     // updates the time estimate if we don't have one or battery level has changed.
@@ -387,12 +406,8 @@ public class PowerUI extends SystemUI implements CommandQueue.Callbacks {
     @VisibleForTesting
     void maybeShowHybridWarning(BatteryStateSnapshot currentSnapshot,
             BatteryStateSnapshot lastSnapshot) {
-        // if we are now over 45% battery & 6 hours remaining so we can trigger hybrid
-        // notification again
-        final long timeRemainingMillis = currentSnapshot.getTimeRemainingMillis();
-        if (currentSnapshot.getBatteryLevel() >= CHARGE_CYCLE_PERCENT_RESET
-                && (timeRemainingMillis > SIX_HOURS_MILLIS
-                || timeRemainingMillis == NO_ESTIMATE_AVAILABLE)) {
+        // if we are now over 30% battery, we can trigger hybrid notification again
+        if (currentSnapshot.getBatteryLevel() >= CHARGE_CYCLE_PERCENT_RESET) {
             mLowWarningShownThisChargeCycle = false;
             mSevereWarningShownThisChargeCycle = false;
             if (DEBUG) {
@@ -407,10 +422,7 @@ public class PowerUI extends SystemUI implements CommandQueue.Callbacks {
             mWarnings.showLowBatteryWarning(playSound);
             // mark if we've already shown a warning this cycle. This will prevent the notification
             // trigger from spamming users by only showing low/critical warnings once per cycle
-            if ((timeRemainingMillis != NO_ESTIMATE_AVAILABLE
-                    && timeRemainingMillis <= currentSnapshot.getSevereThresholdMillis())
-                    || currentSnapshot.getBatteryLevel()
-                    <= currentSnapshot.getSevereLevelThreshold()) {
+            if (currentSnapshot.getBatteryLevel() <= currentSnapshot.getSevereLevelThreshold()) {
                 mSevereWarningShownThisChargeCycle = true;
                 mLowWarningShownThisChargeCycle = true;
                 if (DEBUG) {
@@ -443,19 +455,13 @@ public class PowerUI extends SystemUI implements CommandQueue.Callbacks {
             return false;
         }
 
-        final long timeRemainingMillis = snapshot.getTimeRemainingMillis();
         // Only show the low warning if enabled once per charge cycle & no battery saver
-        final boolean canShowWarning = snapshot.isLowWarningEnabled()
-                && !mLowWarningShownThisChargeCycle && !snapshot.isPowerSaver()
-                && ((timeRemainingMillis != NO_ESTIMATE_AVAILABLE
-                && timeRemainingMillis < snapshot.getLowThresholdMillis())
-                || snapshot.getBatteryLevel() <= snapshot.getLowLevelThreshold());
+        final boolean canShowWarning = !mLowWarningShownThisChargeCycle && !snapshot.isPowerSaver()
+                && snapshot.getBatteryLevel() <= snapshot.getLowLevelThreshold();
 
         // Only show the severe warning once per charge cycle
         final boolean canShowSevereWarning = !mSevereWarningShownThisChargeCycle
-                && ((timeRemainingMillis != NO_ESTIMATE_AVAILABLE
-                && timeRemainingMillis < snapshot.getSevereThresholdMillis())
-                || snapshot.getBatteryLevel() <= snapshot.getSevereLevelThreshold());
+                && snapshot.getBatteryLevel() <= snapshot.getSevereLevelThreshold();
 
         final boolean canShow = canShowWarning || canShowSevereWarning;
 
@@ -471,7 +477,8 @@ public class PowerUI extends SystemUI implements CommandQueue.Callbacks {
     @VisibleForTesting
     boolean shouldDismissHybridWarning(BatteryStateSnapshot snapshot) {
         return snapshot.getPlugged()
-                || snapshot.getTimeRemainingMillis() > snapshot.getLowThresholdMillis();
+                || snapshot.getBatteryLevel()
+                > snapshot.getLowLevelThreshold();
     }
 
     protected void maybeShowBatteryWarning(
@@ -622,7 +629,7 @@ public class PowerUI extends SystemUI implements CommandQueue.Callbacks {
         }
     }
 
-    public void dump(FileDescriptor fd, PrintWriter pw, String[] args) {
+    public void dump(PrintWriter pw, String[] args) {
         pw.print("mLowBatteryAlertCloseLevel=");
         pw.println(mLowBatteryAlertCloseLevel);
         pw.print("mLowBatteryReminderLevels=");
@@ -711,8 +718,10 @@ public class PowerUI extends SystemUI implements CommandQueue.Callbacks {
             int status = temp.getStatus();
 
             if (status >= Temperature.THROTTLING_EMERGENCY) {
-                final Optional<StatusBar> statusBarOptional = mStatusBarOptionalLazy.get();
-                if (!statusBarOptional.map(StatusBar::isDeviceInVrMode).orElse(false)) {
+                final Optional<CentralSurfaces> centralSurfacesOptional =
+                        mCentralSurfacesOptionalLazy.get();
+                if (!centralSurfacesOptional.map(CentralSurfaces::isDeviceInVrMode)
+                        .orElse(false)) {
                     mWarnings.showHighTemperatureWarning();
                     Slog.d(TAG, "SkinThermalEventListener: notifyThrottling was called "
                             + ", current skin status = " + status

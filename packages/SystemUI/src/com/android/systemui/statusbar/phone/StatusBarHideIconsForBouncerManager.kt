@@ -1,12 +1,14 @@
 package com.android.systemui.statusbar.phone
 
+import android.app.StatusBarManager
 import com.android.systemui.Dumpable
 import com.android.systemui.dagger.SysUISingleton
 import com.android.systemui.dagger.qualifiers.Main
 import com.android.systemui.dump.DumpManager
+import com.android.systemui.shade.ShadeExpansionStateManager
 import com.android.systemui.statusbar.CommandQueue
+import com.android.systemui.statusbar.window.StatusBarWindowStateController
 import com.android.systemui.util.concurrency.DelayableExecutor
-import java.io.FileDescriptor
 import java.io.PrintWriter
 import javax.inject.Inject
 
@@ -23,9 +25,11 @@ import javax.inject.Inject
  */
 @SysUISingleton
 class StatusBarHideIconsForBouncerManager @Inject constructor(
-    private val commandQueue: CommandQueue,
-    @Main private val mainExecutor: DelayableExecutor,
-    dumpManager: DumpManager
+        private val commandQueue: CommandQueue,
+        @Main private val mainExecutor: DelayableExecutor,
+        statusBarWindowStateController: StatusBarWindowStateController,
+        shadeExpansionStateManager: ShadeExpansionStateManager,
+        dumpManager: DumpManager
 ) : Dumpable {
     // State variables set by external classes.
     private var panelExpanded: Boolean = false
@@ -42,6 +46,15 @@ class StatusBarHideIconsForBouncerManager @Inject constructor(
 
     init {
         dumpManager.registerDumpable(this)
+        statusBarWindowStateController.addListener {
+                state -> setStatusBarStateAndTriggerUpdate(state)
+        }
+        shadeExpansionStateManager.addFullExpansionListener { isExpanded ->
+            if (panelExpanded != isExpanded) {
+                panelExpanded = isExpanded
+                updateHideIconsForBouncer(animate = false)
+            }
+        }
     }
 
     /** Returns true if the status bar icons should be hidden in the bouncer. */
@@ -49,17 +62,13 @@ class StatusBarHideIconsForBouncerManager @Inject constructor(
         return hideIconsForBouncer || wereIconsJustHidden
     }
 
-    fun setStatusBarWindowHidden(statusBarWindowHidden: Boolean) {
-        this.statusBarWindowHidden = statusBarWindowHidden
+    private fun setStatusBarStateAndTriggerUpdate(@StatusBarManager.WindowVisibleState state: Int) {
+        statusBarWindowHidden = state == StatusBarManager.WINDOW_STATE_HIDDEN
+        updateHideIconsForBouncer(animate = false)
     }
 
     fun setDisplayId(displayId: Int) {
         this.displayId = displayId
-    }
-
-    fun setPanelExpandedAndTriggerUpdate(panelExpanded: Boolean) {
-        this.panelExpanded = panelExpanded
-        updateHideIconsForBouncer(animate = false)
     }
 
     fun setIsOccludedAndTriggerUpdate(isOccluded: Boolean) {
@@ -87,7 +96,7 @@ class StatusBarHideIconsForBouncerManager @Inject constructor(
      * Updates whether the status bar icons should be hidden in the bouncer. May trigger
      * [commandQueue.recomputeDisableFlags] if the icon visibility status changes.
      */
-    fun updateHideIconsForBouncer(animate: Boolean) {
+    private fun updateHideIconsForBouncer(animate: Boolean) {
         val hideBecauseApp =
             topAppHidesStatusBar &&
                     isOccluded &&
@@ -116,7 +125,7 @@ class StatusBarHideIconsForBouncerManager @Inject constructor(
         }
     }
 
-    override fun dump(fd: FileDescriptor, pw: PrintWriter, args: Array<out String>) {
+    override fun dump(pw: PrintWriter, args: Array<out String>) {
         pw.println("---- State variables set externally ----")
         pw.println("panelExpanded=$panelExpanded")
         pw.println("isOccluded=$isOccluded")

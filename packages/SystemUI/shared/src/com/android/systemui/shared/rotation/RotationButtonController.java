@@ -16,6 +16,7 @@
 
 package com.android.systemui.shared.rotation;
 
+import static android.content.pm.PackageManager.FEATURE_PC;
 import static android.view.Display.DEFAULT_DISPLAY;
 
 import android.animation.Animator;
@@ -45,17 +46,19 @@ import android.view.accessibility.AccessibilityManager;
 import android.view.animation.Interpolator;
 import android.view.animation.LinearInterpolator;
 
+import com.android.internal.annotations.VisibleForTesting;
 import com.android.internal.logging.UiEvent;
 import com.android.internal.logging.UiEventLogger;
 import com.android.internal.logging.UiEventLoggerImpl;
 import com.android.internal.view.RotationPolicy;
-import com.android.systemui.shared.rotation.RotationButton.RotationButtonUpdatesCallback;
 import com.android.systemui.shared.recents.utilities.Utilities;
 import com.android.systemui.shared.recents.utilities.ViewRippler;
+import com.android.systemui.shared.rotation.RotationButton.RotationButtonUpdatesCallback;
 import com.android.systemui.shared.system.ActivityManagerWrapper;
 import com.android.systemui.shared.system.TaskStackChangeListener;
 import com.android.systemui.shared.system.TaskStackChangeListeners;
 
+import java.io.PrintWriter;
 import java.util.Optional;
 import java.util.function.Consumer;
 import java.util.function.Supplier;
@@ -65,7 +68,7 @@ import java.util.function.Supplier;
  */
 public class RotationButtonController {
 
-    private static final String TAG = "StatusBar/RotationButtonController";
+    private static final String TAG = "RotationButtonController";
     private static final int BUTTON_FADE_IN_OUT_DURATION_MS = 100;
     private static final int NAVBAR_HIDDEN_PENDING_ICON_TIMEOUT_MS = 20000;
     private static final Interpolator LINEAR_INTERPOLATOR = new LinearInterpolator();
@@ -93,6 +96,8 @@ public class RotationButtonController {
     @SuppressLint("InlinedApi")
     private @WindowInsetsController.Behavior
     int mBehavior = WindowInsetsController.BEHAVIOR_DEFAULT;
+    private int mNavBarMode;
+    private boolean mTaskBarVisible = false;
     private boolean mSkipOverrideUserLockPrefsOnce;
     private final int mLightIconColor;
     private final int mDarkIconColor;
@@ -124,8 +129,11 @@ public class RotationButtonController {
             mMainThreadHandler.postAtFrontOfQueue(() -> {
                 // If the screen rotation changes while locked, potentially update lock to flow with
                 // new screen rotation and hide any showing suggestions.
-                if (isRotationLocked()) {
-                    if (shouldOverrideUserLockPrefs(rotation)) {
+                boolean rotationLocked = isRotationLocked();
+                // The isVisible check makes the rotation button disappear when we are not locked
+                // (e.g. for tabletop auto-rotate).
+                if (rotationLocked || mRotationButton.isVisible()) {
+                    if (shouldOverrideUserLockPrefs(rotation) && rotationLocked) {
                         setRotationLockedAtAngle(rotation);
                     }
                     setRotateSuggestionButtonState(false /* visible */, true /* forced */);
@@ -198,7 +206,7 @@ public class RotationButtonController {
     }
 
     public void registerListeners() {
-        if (mListenersRegistered) {
+        if (mListenersRegistered || getContext().getPackageManager().hasSystemFeature(FEATURE_PC)) {
             return;
         }
 
@@ -238,7 +246,8 @@ public class RotationButtonController {
     }
 
     public void setRotationLockedAtAngle(int rotationSuggestion) {
-        RotationPolicy.setRotationLockAtAngle(mContext, true, rotationSuggestion);
+        RotationPolicy.setRotationLockAtAngle(mContext, /* enabled= */ isRotationLocked(),
+                /* rotation= */ rotationSuggestion);
     }
 
     public boolean isRotationLocked() {
@@ -366,6 +375,7 @@ public class RotationButtonController {
         }
 
         // Prepare to show the navbar icon by updating the icon style to change anim params
+        Log.i(TAG, "onRotationProposal(rotation=" + rotation + ")");
         mLastRotationSuggestion = rotation; // Remember rotation for click
         final boolean rotationCCW = Utilities.isRotationAnimationCCW(windowRotation, rotation);
         if (windowRotation == Surface.ROTATION_0 || windowRotation == Surface.ROTATION_180) {
@@ -393,6 +403,10 @@ public class RotationButtonController {
         if (rotateSuggestionsDisabled) onRotationSuggestionsDisabled();
     }
 
+    public void onNavigationModeChanged(int mode) {
+        mNavBarMode = mode;
+    }
+
     public void onBehaviorChanged(int displayId, @WindowInsetsController.Behavior int behavior) {
         if (DEFAULT_DISPLAY != displayId) {
             return;
@@ -412,6 +426,10 @@ public class RotationButtonController {
     }
 
     public void onTaskbarStateChange(boolean visible, boolean stashed) {
+        mTaskBarVisible = visible;
+        if (getRotationButton() == null) {
+            return;
+        }
         getRotationButton().onTaskbarStateChanged(visible, stashed);
     }
 
@@ -425,8 +443,12 @@ public class RotationButtonController {
      * Return true when either the task bar is visible or it's in visual immersive mode.
      */
     @SuppressLint("InlinedApi")
-    private boolean canShowRotationButton() {
-        return mIsNavigationBarShowing || mBehavior == WindowInsetsController.BEHAVIOR_DEFAULT;
+    @VisibleForTesting
+    boolean canShowRotationButton() {
+        return mIsNavigationBarShowing
+            || mBehavior == WindowInsetsController.BEHAVIOR_DEFAULT
+            || isGesturalMode(mNavBarMode)
+            || mTaskBarVisible;
     }
 
     @DrawableRes
@@ -444,6 +466,30 @@ public class RotationButtonController {
         return mDarkIconColor;
     }
 
+    public void dumpLogs(String prefix, PrintWriter pw) {
+        pw.println(prefix + "RotationButtonController:");
+
+        pw.println(String.format(
+                "%s\tmIsRecentsAnimationRunning=%b", prefix, mIsRecentsAnimationRunning));
+        pw.println(String.format("%s\tmHomeRotationEnabled=%b", prefix, mHomeRotationEnabled));
+        pw.println(String.format(
+                "%s\tmLastRotationSuggestion=%d", prefix, mLastRotationSuggestion));
+        pw.println(String.format(
+                "%s\tmPendingRotationSuggestion=%b", prefix, mPendingRotationSuggestion));
+        pw.println(String.format(
+                "%s\tmHoveringRotationSuggestion=%b", prefix, mHoveringRotationSuggestion));
+        pw.println(String.format("%s\tmListenersRegistered=%b", prefix, mListenersRegistered));
+        pw.println(String.format(
+                "%s\tmIsNavigationBarShowing=%b", prefix, mIsNavigationBarShowing));
+        pw.println(String.format("%s\tmBehavior=%d", prefix, mBehavior));
+        pw.println(String.format(
+                "%s\tmSkipOverrideUserLockPrefsOnce=%b", prefix, mSkipOverrideUserLockPrefsOnce));
+        pw.println(String.format(
+                "%s\tmLightIconColor=0x%s", prefix, Integer.toHexString(mLightIconColor)));
+        pw.println(String.format(
+                "%s\tmDarkIconColor=0x%s", prefix, Integer.toHexString(mDarkIconColor)));
+    }
+
     public RotationButton getRotationButton() {
         return mRotationButton;
     }
@@ -452,6 +498,7 @@ public class RotationButtonController {
         mUiEventLogger.log(RotationButtonEvent.ROTATION_SUGGESTION_ACCEPTED);
         incrementNumAcceptedRotationSuggestionsIfNeeded();
         setRotationLockedAtAngle(mLastRotationSuggestion);
+        Log.i(TAG, "onRotateSuggestionClick() mLastRotationSuggestion=" + mLastRotationSuggestion);
         v.performHapticFeedback(HapticFeedbackConstants.VIRTUAL_KEY);
     }
 
@@ -537,7 +584,7 @@ public class RotationButtonController {
         }
     }
 
-    private class TaskStackListenerImpl extends TaskStackChangeListener {
+    private class TaskStackListenerImpl implements TaskStackChangeListener {
         // Invalidate any rotation suggestion on task change or activity orientation change
         // Note: all callbacks happen on main thread
 
@@ -586,4 +633,3 @@ public class RotationButtonController {
         }
     }
 }
-

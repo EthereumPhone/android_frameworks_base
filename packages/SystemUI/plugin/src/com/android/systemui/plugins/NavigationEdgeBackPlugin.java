@@ -64,5 +64,19 @@ public interface NavigationEdgeBackPlugin extends Plugin {
 
         /** Indicates that the gesture was cancelled and the system should not go back. */
         void cancelBack();
+
+        /**
+         * Indicates if back will be triggered if committed in current state.
+         *
+         * @param triggerBack if back will be triggered in current state.
+         */
+        void setTriggerBack(boolean triggerBack);
+
+        /**
+         * Indicates if long swipe will be triggered if committed in current state.
+         *
+         * @param triggerLongSwipe if long swipe will be triggered in current state.
+         */
+        void setTriggerLongSwipe(boolean triggerLongSwipe);
     }
 }

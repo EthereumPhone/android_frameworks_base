@@ -286,7 +286,7 @@ public final class MediaSession {
     @Deprecated
     public void setMediaButtonReceiver(@Nullable PendingIntent mbr) {
         try {
-            mBinder.setMediaButtonReceiver(mbr, mContext.getPackageName());
+            mBinder.setMediaButtonReceiver(mbr);
         } catch (RemoteException e) {
             Log.wtf(TAG, "Failure in setMediaButtonReceiver.", e);
         }
@@ -657,8 +657,9 @@ public final class MediaSession {
             parcel.setDataPosition(0);
             Bundle out = parcel.readBundle(null);
 
-            // Calling Bundle#size() will trigger Bundle#unparcel().
-            out.size();
+            for (String key : out.keySet()) {
+                out.get(key);
+            }
         } catch (BadParcelableException e) {
             Log.d(TAG, "Custom parcelable in bundle.", e);
             return true;

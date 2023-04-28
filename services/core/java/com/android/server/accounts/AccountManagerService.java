@@ -60,13 +60,14 @@ import android.content.pm.PackageInfo;
 import android.content.pm.PackageManager;
 import android.content.pm.PackageManager.NameNotFoundException;
 import android.content.pm.PackageManagerInternal;
-import android.content.pm.PackageParser;
 import android.content.pm.RegisteredServicesCache;
 import android.content.pm.RegisteredServicesCacheListener;
 import android.content.pm.ResolveInfo;
 import android.content.pm.Signature;
+import android.content.pm.SigningDetails.CertCapabilities;
 import android.content.pm.UserInfo;
 import android.database.Cursor;
+import android.database.sqlite.SQLiteFullException;
 import android.database.sqlite.SQLiteStatement;
 import android.os.Binder;
 import android.os.Bundle;
@@ -88,6 +89,7 @@ import android.os.UserHandle;
 import android.os.UserManager;
 import android.stats.devicepolicy.DevicePolicyEnums;
 import android.text.TextUtils;
+import android.util.EventLog;
 import android.util.Log;
 import android.util.Pair;
 import android.util.Slog;
@@ -167,8 +169,8 @@ public class AccountManagerService
         }
 
         @Override
-        public void onUserStopping(@NonNull TargetUser user) {
-            Slog.i(TAG, "onStopUser " + user);
+        public void onUserStopped(@NonNull TargetUser user) {
+            Slog.i(TAG, "onUserStopped " + user);
             mService.purgeUserData(user.getUserIdentifier());
         }
     }
@@ -526,7 +528,7 @@ public class AccountManagerService
     private Map<Account, Integer> getAccountsAndVisibilityForPackage(String packageName,
             List<String> accountTypes, Integer callingUid, UserAccounts accounts) {
         if (!packageExistsForUser(packageName, accounts.userId)) {
-            Log.d(TAG, "Package not found " + packageName);
+            Log.w(TAG, "getAccountsAndVisibilityForPackage#Package not found " + packageName);
             return new LinkedHashMap<>();
         }
 
@@ -675,7 +677,7 @@ public class AccountManagerService
                 restoreCallingIdentity(identityToken);
             }
         } catch (NameNotFoundException e) {
-            Log.d(TAG, "Package not found " + e.getMessage());
+            Log.w(TAG, "resolveAccountVisibility#Package not found " + e.getMessage());
             return AccountManager.VISIBILITY_NOT_VISIBLE;
         }
 
@@ -754,7 +756,7 @@ public class AccountManagerService
             }
             return true;
         } catch (NameNotFoundException e) {
-            Log.d(TAG, "Package not found " + e.getMessage());
+            Log.w(TAG, "isPreOApplication#Package not found " + e.getMessage());
             return true;
         }
     }
@@ -2988,19 +2990,21 @@ public class AccountManagerService
                  * outside of those expected to be injected by the AccountManager, e.g.
                  * ANDORID_PACKAGE_NAME.
                  */
-                String token = readCachedTokenInternal(
+                TokenCache.Value cachedToken = readCachedTokenInternal(
                         accounts,
                         account,
                         authTokenType,
                         callerPkg,
                         callerPkgSigDigest);
-                if (token != null) {
+                if (cachedToken != null) {
                     logGetAuthTokenMetrics(callerPkg, account.type);
                     if (Log.isLoggable(TAG, Log.VERBOSE)) {
                         Log.v(TAG, "getAuthToken: cache hit ofr custom token authenticator.");
                     }
                     Bundle result = new Bundle();
-                    result.putString(AccountManager.KEY_AUTHTOKEN, token);
+                    result.putString(AccountManager.KEY_AUTHTOKEN, cachedToken.token);
+                    result.putLong(AbstractAccountAuthenticator.KEY_CUSTOM_TOKEN_EXPIRY,
+                            cachedToken.expiryEpochMillis);
                     result.putString(AccountManager.KEY_ACCOUNT_NAME, account.name);
                     result.putString(AccountManager.KEY_ACCOUNT_TYPE, account.type);
                     onResult(response, result);
@@ -3087,7 +3091,7 @@ public class AccountManagerService
                             }
                         }
 
-                        Intent intent = result.getParcelable(AccountManager.KEY_INTENT);
+                        Intent intent = result.getParcelable(AccountManager.KEY_INTENT, Intent.class);
                         if (intent != null && notifyOnAuthFailure && !customTokens) {
                             /*
                              * Make sure that the supplied intent is owned by the authenticator
@@ -3097,7 +3101,7 @@ public class AccountManagerService
                              */
                             if (!checkKeyIntent(
                                     Binder.getCallingUid(),
-                                    intent)) {
+                                    result)) {
                                 onError(AccountManager.ERROR_CODE_INVALID_RESPONSE,
                                         "invalid intent in bundle returned");
                                 return;
@@ -3154,7 +3158,7 @@ public class AccountManagerService
                 GrantCredentialsPermissionActivity.EXTRAS_AUTH_TOKEN_TYPE);
         final String titleAndSubtitle =
                 mContext.getString(R.string.permission_request_notification_for_app_with_subtitle,
-                getApplicationLabel(packageName), account.name);
+                getApplicationLabel(packageName, userId), account.name);
         final int index = titleAndSubtitle.indexOf('\n');
         String title = titleAndSubtitle;
         String subtitle = "";
@@ -3180,10 +3184,10 @@ public class AccountManagerService
                 account, authTokenType, uid), n, "android", user.getIdentifier());
     }
 
-    private String getApplicationLabel(String packageName) {
+    private String getApplicationLabel(String packageName, int userId) {
         try {
             return mPackageManager.getApplicationLabel(
-                    mPackageManager.getApplicationInfo(packageName, 0)).toString();
+                    mPackageManager.getApplicationInfoAsUser(packageName, 0, userId)).toString();
         } catch (PackageManager.NameNotFoundException e) {
             return packageName;
         }
@@ -3512,11 +3516,10 @@ public class AccountManagerService
             Bundle.setDefusable(result, true);
             mNumResults++;
             Intent intent = null;
-            if (result != null
-                    && (intent = result.getParcelable(AccountManager.KEY_INTENT)) != null) {
+            if (result != null) {
                 if (!checkKeyIntent(
                         Binder.getCallingUid(),
-                        intent)) {
+                        result)) {
                     onError(AccountManager.ERROR_CODE_INVALID_RESPONSE,
                             "invalid intent in bundle returned");
                     return;
@@ -4059,7 +4062,7 @@ public class AccountManagerService
             int uid = mPackageManager.getPackageUidAsUser(packageName, userId);
             return hasAccountAccess(account, packageName, uid);
         } catch (NameNotFoundException e) {
-            Log.d(TAG, "Package not found " + e.getMessage());
+            Log.w(TAG, "hasAccountAccess#Package not found " + e.getMessage());
             return false;
         }
     }
@@ -4191,7 +4194,7 @@ public class AccountManagerService
         }
         final long token = Binder.clearCallingIdentity();
         try {
-            AccountAndUser[] allAccounts = getAllAccounts();
+            AccountAndUser[] allAccounts = getAllAccountsForSystemProcess();
             for (int i = allAccounts.length - 1; i >= 0; i--) {
                 if (allAccounts[i].account.equals(account)) {
                     return true;
@@ -4341,10 +4344,11 @@ public class AccountManagerService
     /**
      * Returns accounts for all running users, ignores visibility values.
      *
+     * Should only be called by System process.
      * @hide
      */
     @NonNull
-    public AccountAndUser[] getRunningAccounts() {
+    public AccountAndUser[] getRunningAccountsForSystem() {
         final int[] runningUserIds;
         try {
             runningUserIds = ActivityManager.getService().getRunningUserIds();
@@ -4352,26 +4356,34 @@ public class AccountManagerService
             // Running in system_server; should never happen
             throw new RuntimeException(e);
         }
-        return getAccounts(runningUserIds);
+        return getAccountsForSystem(runningUserIds);
     }
 
     /**
      * Returns accounts for all users, ignores visibility values.
      *
+     * Should only be called by system process
+     *
      * @hide
      */
     @NonNull
-    public AccountAndUser[] getAllAccounts() {
+    public AccountAndUser[] getAllAccountsForSystemProcess() {
         final List<UserInfo> users = getUserManager().getAliveUsers();
         final int[] userIds = new int[users.size()];
         for (int i = 0; i < userIds.length; i++) {
             userIds[i] = users.get(i).id;
         }
-        return getAccounts(userIds);
+        return getAccountsForSystem(userIds);
     }
 
+    /**
+     * Returns all accounts for the given user, ignores all visibility checks.
+     * This should only be called by system process.
+     *
+     * @hide
+     */
     @NonNull
-    private AccountAndUser[] getAccounts(int[] userIds) {
+    private AccountAndUser[] getAccountsForSystem(int[] userIds) {
         final ArrayList<AccountAndUser> runningAccounts = Lists.newArrayList();
         for (int userId : userIds) {
             UserAccounts userAccounts = getUserAccounts(userId);
@@ -4380,7 +4392,7 @@ public class AccountManagerService
                     userAccounts,
                     null /* type */,
                     Binder.getCallingUid(),
-                    null /* packageName */,
+                    "android"/* packageName */,
                     false /* include managed not visible*/);
             for (Account account : accounts) {
                 runningAccounts.add(new AccountAndUser(account, userId));
@@ -4867,7 +4879,15 @@ public class AccountManagerService
          * into launching arbitrary intents on the device via by tricking to click authenticator
          * supplied entries in the system Settings app.
          */
-         protected boolean checkKeyIntent(int authUid, Intent intent) {
+        protected boolean checkKeyIntent(int authUid, Bundle bundle) {
+            if (!checkKeyIntentParceledCorrectly(bundle)) {
+            	EventLog.writeEvent(0x534e4554, "250588548", authUid, "");
+                return false;
+            }
+            Intent intent = bundle.getParcelable(AccountManager.KEY_INTENT, Intent.class);
+            if (intent == null) {
+                return true;
+            }
             // Explicitly set an empty ClipData to ensure that we don't offer to
             // promote any Uris contained inside for granting purposes
             if (intent.getClipData() == null) {
@@ -4888,9 +4908,7 @@ public class AccountManagerService
                 int targetUid = targetActivityInfo.applicationInfo.uid;
                 PackageManagerInternal pmi = LocalServices.getService(PackageManagerInternal.class);
                 if (!isExportedSystemActivity(targetActivityInfo)
-                        && !pmi.hasSignatureCapability(
-                                targetUid, authUid,
-                                PackageParser.SigningDetails.CertCapabilities.AUTH)) {
+                        && !pmi.hasSignatureCapability(targetUid, authUid, CertCapabilities.AUTH)) {
                     String pkgName = targetActivityInfo.packageName;
                     String activityName = targetActivityInfo.name;
                     String tmpl = "KEY_INTENT resolved to an Activity (%s) in a package (%s) that "
@@ -4902,6 +4920,29 @@ public class AccountManagerService
             } finally {
                 Binder.restoreCallingIdentity(bid);
             }
+        }
+
+        /**
+         * Simulate the client side's deserialization of KEY_INTENT value, to make sure they don't
+         * violate our security policy.
+         *
+         * In particular we want to make sure the Authenticator doesn't trick users
+         * into launching arbitrary intents on the device via exploiting any other Parcel read/write
+         * mismatch problems.
+         */
+        private boolean checkKeyIntentParceledCorrectly(Bundle bundle) {
+            Parcel p = Parcel.obtain();
+            p.writeBundle(bundle);
+            p.setDataPosition(0);
+            Bundle simulateBundle = p.readBundle();
+            p.recycle();
+            Intent intent = bundle.getParcelable(AccountManager.KEY_INTENT, Intent.class);
+            Intent simulateIntent = simulateBundle.getParcelable(AccountManager.KEY_INTENT,
+                    Intent.class);
+            if (intent == null) {
+                return (simulateIntent == null);
+            }
+            return intent.filterEquals(simulateIntent);
         }
 
         private boolean isExportedSystemActivity(ActivityInfo activityInfo) {
@@ -5046,11 +5087,10 @@ public class AccountManagerService
                     }
                 }
             }
-            if (result != null
-                    && (intent = result.getParcelable(AccountManager.KEY_INTENT)) != null) {
+            if (result != null) {
                 if (!checkKeyIntent(
                         Binder.getCallingUid(),
-                        intent)) {
+                        result)) {
                     onError(AccountManager.ERROR_CODE_INVALID_RESPONSE,
                             "invalid intent in bundle returned");
                     return;
@@ -5262,7 +5302,7 @@ public class AccountManagerService
                     logStatement.bindLong(6, userDebugDbInsertionPoint);
                     try {
                         logStatement.execute();
-                    } catch (IllegalStateException e) {
+                    } catch (IllegalStateException | SQLiteFullException e) {
                         // Guard against crash, DB can already be closed
                         // since this statement is executed on a handler thread
                         Slog.w(TAG, "Failed to insert a log record. accountId=" + accountId
@@ -5328,7 +5368,7 @@ public class AccountManagerService
             }
         } else {
             Account[] accounts = getAccountsFromCache(userAccounts, null /* type */,
-                    Process.SYSTEM_UID, null /* packageName */, false);
+                    Process.SYSTEM_UID, "android" /* packageName */, false);
             fout.println("Accounts: " + accounts.length);
             for (Account account : accounts) {
                 fout.println("  " + account.toString());
@@ -5523,7 +5563,7 @@ public class AccountManagerService
                         return true;
                     }
                 } catch (PackageManager.NameNotFoundException e) {
-                    Log.d(TAG, "Package not found " + e.getMessage());
+                    Log.w(TAG, "isPrivileged#Package not found " + e.getMessage());
                 }
             }
         } finally {
@@ -5643,8 +5683,7 @@ public class AccountManagerService
                     return SIGNATURE_CHECK_UID_MATCH;
                 }
                 if (pmi.hasSignatureCapability(
-                        serviceInfo.uid, callingUid,
-                        PackageParser.SigningDetails.CertCapabilities.AUTH)) {
+                        serviceInfo.uid, callingUid, CertCapabilities.AUTH)) {
                     return SIGNATURE_CHECK_MATCH;
                 }
             }
@@ -5685,8 +5724,7 @@ public class AccountManagerService
         for (RegisteredServicesCache.ServiceInfo<AuthenticatorDescription> serviceInfo :
                 serviceInfos) {
             if (isOtherwisePermitted || pmi.hasSignatureCapability(
-                    serviceInfo.uid, callingUid,
-                    PackageParser.SigningDetails.CertCapabilities.AUTH)) {
+                    serviceInfo.uid, callingUid, CertCapabilities.AUTH)) {
                 managedAccountTypes.add(serviceInfo.type.type);
             }
         }
@@ -6049,7 +6087,7 @@ public class AccountManagerService
                     }
                 }
             } catch (NameNotFoundException e) {
-                Log.d(TAG, "Package not found " + e.getMessage());
+                Log.w(TAG, "filterSharedAccounts#Package not found " + e.getMessage());
             }
             Map<Account, Integer> filtered = new LinkedHashMap<>();
             for (Map.Entry<Account, Integer> entry : unfiltered.entrySet()) {
@@ -6136,7 +6174,7 @@ public class AccountManagerService
         }
     }
 
-    protected String readCachedTokenInternal(
+    protected TokenCache.Value readCachedTokenInternal(
             UserAccounts accounts,
             Account account,
             String tokenType,

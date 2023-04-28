@@ -16,9 +16,9 @@
 
 package com.android.systemui.statusbar.notification.collection.coalescer
 
-import com.android.systemui.log.LogBuffer
-import com.android.systemui.log.LogLevel
 import com.android.systemui.log.dagger.NotificationLog
+import com.android.systemui.plugins.log.LogBuffer
+import com.android.systemui.plugins.log.LogLevel
 import javax.inject.Inject
 
 class GroupCoalescerLogger @Inject constructor(
@@ -32,11 +32,13 @@ class GroupCoalescerLogger @Inject constructor(
         })
     }
 
-    fun logEmitBatch(groupKey: String) {
+    fun logEmitBatch(groupKey: String, batchSize: Int, batchAgeMs: Long) {
         buffer.log(TAG, LogLevel.DEBUG, {
             str1 = groupKey
+            int1 = batchSize
+            long1 = batchAgeMs
         }, {
-            "Emitting event batch for group $str1"
+            "Emitting batch for group $str1 size=$int1 age=${long1}ms"
         })
     }
 

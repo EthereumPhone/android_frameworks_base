@@ -24,9 +24,8 @@ import android.app.NotificationManager
 import android.content.Context
 import com.android.internal.messages.nano.SystemMessageProto
 import com.android.internal.net.VpnConfig
-import com.android.systemui.Dependency
+import com.android.systemui.CoreStartable
 import com.android.systemui.R
-import com.android.systemui.SystemUI
 import com.android.systemui.dagger.SysUISingleton
 import com.android.systemui.statusbar.policy.SecurityController
 import javax.inject.Inject
@@ -35,12 +34,13 @@ import javax.inject.Inject
  * Observes if a vpn connection is active and displays a notification to the user
  */
 @SysUISingleton
-class VpnStatusObserver @Inject constructor(context: Context) : SystemUI(context),
+class VpnStatusObserver @Inject constructor(
+    private val context: Context,
+    private val securityController: SecurityController
+) : CoreStartable,
         SecurityController.SecurityControllerCallback {
 
     private var vpnConnected = false
-    private val securityController: SecurityController =
-            Dependency.get(SecurityController::class.java)
     private val notificationManager = NotificationManager.from(context)
     private val notificationChannel = createNotificationChannel()
     private val vpnConnectedNotificationBuilder = createVpnConnectedNotificationBuilder()
@@ -102,7 +102,7 @@ class VpnStatusObserver @Inject constructor(context: Context) : SystemUI(context
                     .apply {
                         vpnName?.let {
                             setContentText(
-                                    mContext.getString(
+                                    context.getString(
                                             R.string.notification_disclosure_vpn_text, it
                                     )
                             )
@@ -111,23 +111,23 @@ class VpnStatusObserver @Inject constructor(context: Context) : SystemUI(context
                     .build()
 
     private fun createVpnConnectedNotificationBuilder() =
-            Notification.Builder(mContext, NOTIFICATION_CHANNEL_TV_VPN)
+            Notification.Builder(context, NOTIFICATION_CHANNEL_TV_VPN)
                     .setSmallIcon(vpnIconId)
                     .setVisibility(Notification.VISIBILITY_PUBLIC)
                     .setCategory(Notification.CATEGORY_SYSTEM)
                     .extend(Notification.TvExtender())
                     .setOngoing(true)
-                    .setContentTitle(mContext.getString(R.string.notification_vpn_connected))
-                    .setContentIntent(VpnConfig.getIntentForStatusPanel(mContext))
+                    .setContentTitle(context.getString(R.string.notification_vpn_connected))
+                    .setContentIntent(VpnConfig.getIntentForStatusPanel(context))
 
     private fun createVpnDisconnectedNotification() =
-            Notification.Builder(mContext, NOTIFICATION_CHANNEL_TV_VPN)
+            Notification.Builder(context, NOTIFICATION_CHANNEL_TV_VPN)
                     .setSmallIcon(vpnIconId)
                     .setVisibility(Notification.VISIBILITY_PUBLIC)
                     .setCategory(Notification.CATEGORY_SYSTEM)
                     .extend(Notification.TvExtender())
                     .setTimeoutAfter(VPN_DISCONNECTED_NOTIFICATION_TIMEOUT_MS)
-                    .setContentTitle(mContext.getString(R.string.notification_vpn_disconnected))
+                    .setContentTitle(context.getString(R.string.notification_vpn_disconnected))
                     .build()
 
     companion object {

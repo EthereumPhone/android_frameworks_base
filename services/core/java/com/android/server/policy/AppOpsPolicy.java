@@ -33,6 +33,7 @@ import android.content.pm.ResolveInfo;
 import android.location.LocationManagerInternal;
 import android.net.Uri;
 import android.os.Binder;
+import android.os.Bundle;
 import android.os.IBinder;
 import android.os.PackageTagsList;
 import android.os.Process;
@@ -44,16 +45,15 @@ import android.util.Log;
 import android.util.SparseArray;
 
 import com.android.internal.annotations.GuardedBy;
-import com.android.internal.util.function.DecFunction;
 import com.android.internal.util.function.HeptFunction;
 import com.android.internal.util.function.HexFunction;
 import com.android.internal.util.function.QuadFunction;
 import com.android.internal.util.function.QuintConsumer;
 import com.android.internal.util.function.QuintFunction;
-import com.android.internal.util.function.TriFunction;
 import com.android.internal.util.function.UndecFunction;
 import com.android.server.LocalServices;
 
+import java.io.PrintWriter;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
@@ -85,8 +85,8 @@ public final class AppOpsPolicy implements AppOpsManagerInternal.CheckOpsDelegat
     private final VoiceInteractionManagerInternal mVoiceInteractionManagerInternal;
 
     /**
-     * Whether this device allows only the HotwordDetectionService to use OP_RECORD_AUDIO_HOTWORD
-     * which doesn't incur the privacy indicator.
+     * Whether this device allows only the HotwordDetectionService to use
+     * OP_RECORD_AUDIO_HOTWORD which doesn't incur the privacy indicator.
      */
     private final boolean mIsHotwordDetectionServiceRequired;
 
@@ -185,13 +185,12 @@ public final class AppOpsPolicy implements AppOpsManagerInternal.CheckOpsDelegat
 
         initializeActivityRecognizersTags();
 
-        // If this device does not have telephony or microphone features, the TelecomService will
-        // not be started (which sets phone call ops to allow only its package). Therefore, phone
-        // call ops need to be restricted here.
+        // Restrict phone call ops if the TelecomService will not start (conditioned on having
+        // FEATURE_MICROPHONE, FEATURE_TELECOM, or FEATURE_TELEPHONY).
         PackageManager pm = mContext.getPackageManager();
         if (!pm.hasSystemFeature(PackageManager.FEATURE_TELEPHONY)
                 && !pm.hasSystemFeature(PackageManager.FEATURE_MICROPHONE)
-                && !pm.hasSystemFeature(PackageManager.FEATURE_CONNECTION_SERVICE)) {
+                && !pm.hasSystemFeature(PackageManager.FEATURE_TELECOM)) {
             AppOpsManager appOps = mContext.getSystemService(AppOpsManager.class);
             appOps.setUserRestrictionForUser(AppOpsManager.OP_PHONE_CALL_MICROPHONE, true, mToken,
                     null, UserHandle.USER_ALL);
@@ -255,14 +254,14 @@ public final class AppOpsPolicy implements AppOpsManagerInternal.CheckOpsDelegat
     }
 
     @Override
-    public SyncNotedAppOp startProxyOperation(int code,
+    public SyncNotedAppOp startProxyOperation(@NonNull IBinder clientId, int code,
             @NonNull AttributionSource attributionSource, boolean startIfModeDefault,
             boolean shouldCollectAsyncNotedOp, String message, boolean shouldCollectMessage,
             boolean skipProxyOperation, @AttributionFlags int proxyAttributionFlags,
             @AttributionFlags int proxiedAttributionFlags, int attributionChainId,
-            @NonNull DecFunction<Integer, AttributionSource, Boolean, Boolean, String, Boolean,
-                    Boolean, Integer, Integer, Integer, SyncNotedAppOp> superImpl) {
-        return superImpl.apply(resolveDatasourceOp(code, attributionSource.getUid(),
+            @NonNull UndecFunction<IBinder, Integer, AttributionSource, Boolean, Boolean, String,
+                    Boolean, Boolean, Integer, Integer, Integer, SyncNotedAppOp> superImpl) {
+        return superImpl.apply(clientId, resolveDatasourceOp(code, attributionSource.getUid(),
                 attributionSource.getPackageName(), attributionSource.getAttributionTag()),
                 attributionSource, startIfModeDefault, shouldCollectAsyncNotedOp, message,
                 shouldCollectMessage, skipProxyOperation, proxyAttributionFlags,
@@ -278,13 +277,40 @@ public final class AppOpsPolicy implements AppOpsManagerInternal.CheckOpsDelegat
     }
 
     @Override
-    public void finishProxyOperation(int code, @NonNull AttributionSource attributionSource,
-            boolean skipProxyOperation, @NonNull TriFunction<Integer, AttributionSource,
-            Boolean, Void> superImpl) {
-        superImpl.apply(resolveDatasourceOp(code, attributionSource.getUid(),
+    public void finishProxyOperation(@NonNull IBinder clientId, int code,
+            @NonNull AttributionSource attributionSource, boolean skipProxyOperation,
+            @NonNull QuadFunction<IBinder, Integer, AttributionSource, Boolean, Void> superImpl) {
+        superImpl.apply(clientId, resolveDatasourceOp(code, attributionSource.getUid(),
                 attributionSource.getPackageName(), attributionSource.getAttributionTag()),
                 attributionSource, skipProxyOperation);
     }
+
+    /**
+     * Write location and activity recognition tags to console.
+     * See also {@code adb shell dumpsys appops}.
+     */
+    public void dumpTags(PrintWriter writer) {
+        if (!mLocationTags.isEmpty()) {
+            writer.println("  AppOps policy location tags:");
+            writeTags(mLocationTags, writer);
+            writer.println();
+        }
+        if (!mActivityRecognitionTags.isEmpty()) {
+            writer.println("  AppOps policy activity recognition tags:");
+            writeTags(mActivityRecognitionTags, writer);
+            writer.println();
+        }
+    }
+
+    private void writeTags(Map<Integer, PackageTagsList> tags, PrintWriter writer) {
+        int counter = 0;
+        for (Map.Entry<Integer, PackageTagsList> tagEntry : tags.entrySet()) {
+            writer.print("    #"); writer.print(counter++); writer.print(": ");
+            writer.print(tagEntry.getKey().toString()); writer.print("=");
+            tagEntry.getValue().dump(writer);
+        }
+    }
+
 
     private int resolveDatasourceOp(int code, int uid, @NonNull String packageName,
             @Nullable String attributionTag) {
@@ -346,8 +372,11 @@ public final class AppOpsPolicy implements AppOpsManagerInternal.CheckOpsDelegat
                     + Intent.ACTION_ACTIVITY_RECOGNIZER +  ", ignoring!");
             return;
         }
-        final String tagsList = resolvedService.serviceInfo.metaData.getString(
-                ACTIVITY_RECOGNITION_TAGS);
+        final Bundle metaData = resolvedService.serviceInfo.metaData;
+        if (metaData == null) {
+            return;
+        }
+        final String tagsList = metaData.getString(ACTIVITY_RECOGNITION_TAGS);
         if (!TextUtils.isEmpty(tagsList)) {
             PackageTagsList packageTagsList = new PackageTagsList.Builder(1).add(
                     resolvedService.serviceInfo.packageName,
@@ -396,8 +425,8 @@ public final class AppOpsPolicy implements AppOpsManagerInternal.CheckOpsDelegat
             if (!mIsHotwordDetectionServiceRequired) {
                 return code;
             }
-            // Only the HotwordDetectionService can use the HOTWORD op which doesn't incur the
-            // privacy indicator. Downgrade to standard RECORD_AUDIO for other processes.
+            // Only the HotwordDetectionService can use the RECORD_AUDIO_HOTWORD op which doesn't
+            // incur the privacy indicator. Downgrade to standard RECORD_AUDIO for other processes.
             final HotwordDetectionServiceIdentity hotwordDetectionServiceIdentity =
                     mVoiceInteractionManagerInternal.getHotwordDetectionServiceIdentity();
             if (hotwordDetectionServiceIdentity != null

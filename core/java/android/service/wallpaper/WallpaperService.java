@@ -18,6 +18,7 @@ package android.service.wallpaper;
 
 import static android.app.WallpaperManager.COMMAND_FREEZE;
 import static android.app.WallpaperManager.COMMAND_UNFREEZE;
+import static android.app.WallpaperManager.SetWallpaperFlags;
 import static android.graphics.Matrix.MSCALE_X;
 import static android.graphics.Matrix.MSCALE_Y;
 import static android.graphics.Matrix.MSKEW_X;
@@ -26,6 +27,10 @@ import static android.view.SurfaceControl.METADATA_WINDOW_TYPE;
 import static android.view.View.SYSTEM_UI_FLAG_VISIBLE;
 import static android.view.WindowManager.LayoutParams.TYPE_WALLPAPER;
 
+import android.animation.AnimationHandler;
+import android.animation.Animator;
+import android.animation.AnimatorListenerAdapter;
+import android.animation.ValueAnimator;
 import android.annotation.FloatRange;
 import android.annotation.NonNull;
 import android.annotation.Nullable;
@@ -44,7 +49,6 @@ import android.content.res.TypedArray;
 import android.graphics.BLASTBufferQueue;
 import android.graphics.Bitmap;
 import android.graphics.Canvas;
-import android.graphics.GraphicBuffer;
 import android.graphics.Matrix;
 import android.graphics.PixelFormat;
 import android.graphics.Point;
@@ -87,6 +91,7 @@ import android.view.SurfaceHolder;
 import android.view.View;
 import android.view.ViewGroup;
 import android.view.WindowInsets;
+import android.view.WindowLayout;
 import android.view.WindowManager;
 import android.view.WindowManagerGlobal;
 import android.window.ClientWindowFrames;
@@ -158,8 +163,9 @@ public abstract class WallpaperService extends Service {
     private static final int MSG_TOUCH_EVENT = 10040;
     private static final int MSG_REQUEST_WALLPAPER_COLORS = 10050;
     private static final int MSG_ZOOM = 10100;
-    private static final int MSG_SCALE_PREVIEW = 10110;
+    private static final int MSG_RESIZE_PREVIEW = 10110;
     private static final int MSG_REPORT_SHOWN = 10150;
+    private static final int MSG_UPDATE_DIMMING = 10200;
     private static final List<Float> PROHIBITED_STEPS = Arrays.asList(0f, Float.POSITIVE_INFINITY,
             Float.NEGATIVE_INFINITY);
 
@@ -167,6 +173,8 @@ public abstract class WallpaperService extends Service {
 
     private static final boolean ENABLE_WALLPAPER_DIMMING =
             SystemProperties.getBoolean("persist.debug.enable_wallpaper_dimming", true);
+
+    private static final long DIMMING_ANIMATION_DURATION_MS = 300L;
 
     private final ArrayList<Engine> mActiveEngines
             = new ArrayList<Engine>();
@@ -193,7 +201,7 @@ public abstract class WallpaperService extends Service {
         final ArraySet<RectF> mLocalColorsToAdd = new ArraySet<>(4);
 
         // 2D matrix [x][y] to represent a page of a portion of a window
-        EngineWindowPage[] mWindowPages = new EngineWindowPage[1];
+        EngineWindowPage[] mWindowPages = new EngineWindowPage[0];
         Bitmap mLastScreenshot;
         int mLastWindowPage = -1;
         private boolean mResetWindowPages;
@@ -222,6 +230,9 @@ public abstract class WallpaperService extends Service {
         boolean mOffsetsChanged;
         boolean mFixedSizeAllowed;
         boolean mShouldDim;
+        // Whether the wallpaper should be dimmed by default (when no additional dimming is applied)
+        // based on its color hints
+        boolean mShouldDimByDefault;
         int mWidth;
         int mHeight;
         int mFormat;
@@ -243,6 +254,7 @@ public abstract class WallpaperService extends Service {
         final InsetsVisibilities mRequestedVisibilities = new InsetsVisibilities();
         final InsetsSourceControl[] mTempControls = new InsetsSourceControl[0];
         final MergedConfiguration mMergedConfiguration = new MergedConfiguration();
+        final Bundle mSyncSeqIdBundle = new Bundle();
         private final Point mSurfaceSize = new Point();
         private final Point mLastSurfaceSize = new Point();
         private final Matrix mTmpMatrix = new Matrix();
@@ -272,7 +284,10 @@ public abstract class WallpaperService extends Service {
         private Display mDisplay;
         private Context mDisplayContext;
         private int mDisplayState;
+        private @Surface.Rotation int mDisplayInstallOrientation;
         private float mWallpaperDimAmount = 0.05f;
+        private float mPreviousWallpaperDimAmount = mWallpaperDimAmount;
+        private float mDefaultDimAmount = mWallpaperDimAmount;
 
         SurfaceControl mSurfaceControl = new SurfaceControl();
         SurfaceControl mBbqSurfaceControl;
@@ -308,7 +323,7 @@ public abstract class WallpaperService extends Service {
 
             @Override
             public void setFixedSize(int width, int height) {
-                if (!mFixedSizeAllowed) {
+                if (!mFixedSizeAllowed && !mIWallpaperEngine.mIsPreview) {
                     // Regular apps can't do this.  It can only work for
                     // certain designs of window animations, so you can't
                     // rely on it.
@@ -378,10 +393,12 @@ public abstract class WallpaperService extends Service {
         final BaseIWindow mWindow = new BaseIWindow() {
             @Override
             public void resized(ClientWindowFrames frames, boolean reportDraw,
-                    MergedConfiguration mergedConfiguration, boolean forceLayout,
-                    boolean alwaysConsumeSystemBars, int displayId) {
-                Message msg = mCaller.obtainMessageI(MSG_WINDOW_RESIZED,
-                        reportDraw ? 1 : 0);
+                    MergedConfiguration mergedConfiguration, InsetsState insetsState,
+                    boolean forceLayout, boolean alwaysConsumeSystemBars, int displayId,
+                    int syncSeqId, int resizeMode) {
+                Message msg = mCaller.obtainMessageIO(MSG_WINDOW_RESIZED,
+                        reportDraw ? 1 : 0,
+                        mergedConfiguration);
                 mCaller.sendMessage(msg);
             }
 
@@ -503,7 +520,7 @@ public abstract class WallpaperService extends Service {
          * {@link #addLocalColorsAreas(List)}
          * {@link #removeLocalColorsAreas(List)}
          * When local colors change, call {@link #notifyLocalColorsChanged(List, List)}
-         * See {@link com.android.systemui.ImageWallpaper} for an example
+         * See {@link com.android.systemui.wallpapers.ImageWallpaper} for an example
          * @hide
          */
         public boolean supportsLocalColorExtraction() {
@@ -561,6 +578,8 @@ public abstract class WallpaperService extends Service {
          */
         public void reportEngineShown(boolean waitForEngineShown) {
             if (mIWallpaperEngine.mShownReported) return;
+            Trace.beginSection("WPMS.reportEngineShown-" + waitForEngineShown);
+            Log.d(TAG, "reportEngineShown: shouldWait=" + waitForEngineShown);
             if (!waitForEngineShown) {
                 Message message = mCaller.obtainMessage(MSG_REPORT_SHOWN);
                 mCaller.removeMessages(MSG_REPORT_SHOWN);
@@ -572,6 +591,7 @@ public abstract class WallpaperService extends Service {
                     mCaller.sendMessageDelayed(message, TimeUnit.SECONDS.toMillis(5));
                 }
             }
+            Trace.endSection();
         }
 
         /**
@@ -604,6 +624,18 @@ public abstract class WallpaperService extends Service {
                         WindowManager.LayoutParams.PRIVATE_FLAG_WANTS_OFFSET_NOTIFICATIONS)
                     : (mWindowPrivateFlags &
                         ~WindowManager.LayoutParams.PRIVATE_FLAG_WANTS_OFFSET_NOTIFICATIONS);
+            if (mCreated) {
+                updateSurface(false, false, false);
+            }
+        }
+
+        /** @hide */
+        public void setShowForAllUsers(boolean show) {
+            mWindowPrivateFlags = show
+                    ? (mWindowPrivateFlags
+                        | WindowManager.LayoutParams.SYSTEM_FLAG_SHOW_FOR_ALL_USERS)
+                    : (mWindowPrivateFlags
+                        & ~WindowManager.LayoutParams.SYSTEM_FLAG_SHOW_FOR_ALL_USERS);
             if (mCreated) {
                 updateSurface(false, false, false);
             }
@@ -850,32 +882,72 @@ public abstract class WallpaperService extends Service {
                 return;
             }
             int colorHints = colors.getColorHints();
-            boolean shouldDim = ((colorHints & WallpaperColors.HINT_SUPPORTS_DARK_TEXT) == 0
+            mShouldDimByDefault = ((colorHints & WallpaperColors.HINT_SUPPORTS_DARK_TEXT) == 0
                     && (colorHints & WallpaperColors.HINT_SUPPORTS_DARK_THEME) == 0);
-            if (shouldDim != mShouldDim) {
-                mShouldDim = shouldDim;
+
+            // If default dimming value changes and no additional dimming is applied
+            if (mShouldDimByDefault != mShouldDim && mWallpaperDimAmount == 0f) {
+                mShouldDim = mShouldDimByDefault;
                 updateSurfaceDimming();
-                updateSurface(false, false, true);
             }
+        }
+
+        /**
+         * Update the dim amount of the wallpaper by updating the surface.
+         *
+         * @param dimAmount Float amount between [0.0, 1.0] to dim the wallpaper.
+         */
+        private void updateWallpaperDimming(float dimAmount) {
+            if (dimAmount == mWallpaperDimAmount) {
+                return;
+            }
+
+            // Custom dim amount cannot be less than the default dim amount.
+            mWallpaperDimAmount = Math.max(mDefaultDimAmount, dimAmount);
+            // If dim amount is 0f (additional dimming is removed), then the wallpaper should dim
+            // based on its default wallpaper color hints.
+            mShouldDim = dimAmount != 0f || mShouldDimByDefault;
+            updateSurfaceDimming();
         }
 
         private void updateSurfaceDimming() {
             if (!ENABLE_WALLPAPER_DIMMING || mBbqSurfaceControl == null) {
                 return;
             }
+
+            SurfaceControl.Transaction surfaceControlTransaction = new SurfaceControl.Transaction();
             // TODO: apply the dimming to preview as well once surface transparency works in
             // preview mode.
-            if (!isPreview() && mShouldDim) {
+            if ((!isPreview() && mShouldDim)
+                    || mPreviousWallpaperDimAmount != mWallpaperDimAmount) {
                 Log.v(TAG, "Setting wallpaper dimming: " + mWallpaperDimAmount);
-                new SurfaceControl.Transaction()
-                        .setAlpha(mBbqSurfaceControl, 1 - mWallpaperDimAmount)
-                        .apply();
+
+                // Animate dimming to gradually change the wallpaper alpha from the previous
+                // dim amount to the new amount only if the dim amount changed.
+                ValueAnimator animator = ValueAnimator.ofFloat(
+                        mPreviousWallpaperDimAmount, mWallpaperDimAmount);
+                animator.setDuration(DIMMING_ANIMATION_DURATION_MS);
+                animator.addUpdateListener((ValueAnimator va) -> {
+                    final float dimValue = (float) va.getAnimatedValue();
+                    if (mBbqSurfaceControl != null) {
+                        surfaceControlTransaction
+                                .setAlpha(mBbqSurfaceControl, 1 - dimValue).apply();
+                    }
+                });
+                animator.addListener(new AnimatorListenerAdapter() {
+                    @Override
+                    public void onAnimationEnd(Animator animation) {
+                        updateSurface(false, false, true);
+                    }
+                });
+                animator.start();
             } else {
                 Log.v(TAG, "Setting wallpaper dimming: " + 0);
-                new SurfaceControl.Transaction()
-                        .setAlpha(mBbqSurfaceControl, 1.0f)
-                        .apply();
+                surfaceControlTransaction.setAlpha(mBbqSurfaceControl, 1.0f).apply();
+                updateSurface(false, false, true);
             }
+
+            mPreviousWallpaperDimAmount = mWallpaperDimAmount;
         }
 
         /**
@@ -976,6 +1048,10 @@ public abstract class WallpaperService extends Service {
             }
         }
 
+        private void updateConfiguration(MergedConfiguration mergedConfiguration) {
+            mMergedConfiguration.setTo(mergedConfiguration);
+        }
+
         void updateSurface(boolean forceRelayout, boolean forceReport, boolean redrawNeeded) {
             if (mDestroyed) {
                 Log.w(TAG, "Ignoring updateSurface due to destroyed");
@@ -1014,8 +1090,6 @@ public abstract class WallpaperService extends Service {
                     mLayout.x = 0;
                     mLayout.y = 0;
 
-                    mLayout.width = myWidth;
-                    mLayout.height = myHeight;
                     mLayout.format = mFormat;
 
                     mCurWindowFlags = mWindowFlags;
@@ -1024,6 +1098,23 @@ public abstract class WallpaperService extends Service {
                             | WindowManager.LayoutParams.FLAG_LAYOUT_INSET_DECOR
                             | WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN
                             | WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE;
+
+                    final Configuration config = mMergedConfiguration.getMergedConfiguration();
+                    final Rect maxBounds = config.windowConfiguration.getMaxBounds();
+                    if (myWidth == ViewGroup.LayoutParams.MATCH_PARENT
+                            && myHeight == ViewGroup.LayoutParams.MATCH_PARENT) {
+                        mLayout.width = myWidth;
+                        mLayout.height = myHeight;
+                        mLayout.flags &= ~WindowManager.LayoutParams.FLAG_SCALED;
+                    } else {
+                        final float layoutScale = Math.max(
+                                maxBounds.width() / (float) myWidth,
+                                maxBounds.height() / (float) myHeight);
+                        mLayout.width = (int) (myWidth * layoutScale + .5f);
+                        mLayout.height = (int) (myHeight * layoutScale + .5f);
+                        mLayout.flags |= WindowManager.LayoutParams.FLAG_SCALED;
+                    }
+
                     mCurWindowPrivateFlags = mWindowPrivateFlags;
                     mLayout.privateFlags = mWindowPrivateFlags;
 
@@ -1047,7 +1138,7 @@ public abstract class WallpaperService extends Service {
 
                         if (mSession.addToDisplay(mWindow, mLayout, View.VISIBLE,
                                 mDisplay.getDisplayId(), mRequestedVisibilities, inputChannel,
-                                mInsetsState, mTempControls) < 0) {
+                                mInsetsState, mTempControls, new Rect(), new float[1]) < 0) {
                             Log.w(TAG, "Failed to add window while updating wallpaper surface.");
                             return;
                         }
@@ -1066,11 +1157,16 @@ public abstract class WallpaperService extends Service {
                     } else {
                         mLayout.surfaceInsets.set(0, 0, 0, 0);
                     }
+                    final int relayoutResult = mSession.relayout(mWindow, mLayout, mWidth, mHeight,
+                            View.VISIBLE, 0, 0, 0, mWinFrames, mMergedConfiguration,
+                            mSurfaceControl, mInsetsState, mTempControls, mSyncSeqIdBundle);
 
-                    final int relayoutResult = mSession.relayout(
-                            mWindow, mLayout, mWidth, mHeight,
-                            View.VISIBLE, 0, -1, mWinFrames, mMergedConfiguration, mSurfaceControl,
-                            mInsetsState, mTempControls, mSurfaceSize);
+                    final int transformHint = SurfaceControl.rotationToBufferTransform(
+                            (mDisplayInstallOrientation + mDisplay.getRotation()) % 4);
+                    mSurfaceControl.setTransformHint(transformHint);
+                    WindowLayout.computeSurfaceSize(mLayout, maxBounds, mWidth, mHeight,
+                            mWinFrames.frame, false /* dragResizing */, mSurfaceSize);
+
                     if (mSurfaceControl.isValid()) {
                         if (mBbqSurfaceControl == null) {
                             mBbqSurfaceControl = new SurfaceControl.Builder()
@@ -1082,11 +1178,10 @@ public abstract class WallpaperService extends Service {
                                     .setParent(mSurfaceControl)
                                     .setCallsite("Wallpaper#relayout")
                                     .build();
-                            updateSurfaceDimming();
                         }
-                        // Propagate transform hint from WM so we can use the right hint for the
+                        // Propagate transform hint from WM, so we can use the right hint for the
                         // first frame.
-                        mBbqSurfaceControl.setTransformHint(mSurfaceControl.getTransformHint());
+                        mBbqSurfaceControl.setTransformHint(transformHint);
                         Surface blastSurface = getOrCreateBLASTSurface(mSurfaceSize.x,
                                 mSurfaceSize.y, mFormat);
                         // If blastSurface == null that means it hasn't changed since the last
@@ -1107,7 +1202,6 @@ public abstract class WallpaperService extends Service {
                     int h = mWinFrames.frame.height();
 
                     final DisplayCutout rawCutout = mInsetsState.getDisplayCutout();
-                    final Configuration config = getResources().getConfiguration();
                     final Rect visibleFrame = new Rect(mWinFrames.frame);
                     visibleFrame.intersect(mInsetsState.getDisplayFrame());
                     WindowInsets windowInsets = mInsetsState.calculateInsets(visibleFrame,
@@ -1167,7 +1261,9 @@ public abstract class WallpaperService extends Service {
                             didSurface = true;
                             if (DEBUG) Log.v(TAG, "onSurfaceCreated("
                                     + mSurfaceHolder + "): " + this);
+                            Trace.beginSection("WPMS.Engine.onSurfaceCreated");
                             onSurfaceCreated(mSurfaceHolder);
+                            Trace.endSection();
                             SurfaceHolder.Callback callbacks[] = mSurfaceHolder.getCallbacks();
                             if (callbacks != null) {
                                 for (SurfaceHolder.Callback c : callbacks) {
@@ -1193,8 +1289,10 @@ public abstract class WallpaperService extends Service {
                                     + ", " + mCurWidth + ", " + mCurHeight
                                     + "): " + this);
                             didSurface = true;
+                            Trace.beginSection("WPMS.Engine.onSurfaceChanged");
                             onSurfaceChanged(mSurfaceHolder, mFormat,
                                     mCurWidth, mCurHeight);
+                            Trace.endSection();
                             SurfaceHolder.Callback callbacks[] = mSurfaceHolder.getCallbacks();
                             if (callbacks != null) {
                                 for (SurfaceHolder.Callback c : callbacks) {
@@ -1211,11 +1309,15 @@ public abstract class WallpaperService extends Service {
                             if (DEBUG) {
                                 Log.v(TAG, "dispatching insets=" + windowInsets);
                             }
+                            Trace.beginSection("WPMS.Engine.onApplyWindowInsets");
                             onApplyWindowInsets(windowInsets);
+                            Trace.endSection();
                         }
 
                         if (redrawNeeded) {
+                            Trace.beginSection("WPMS.Engine.onSurfaceRedrawNeeded");
                             onSurfaceRedrawNeeded(mSurfaceHolder);
+                            Trace.endSection();
                             SurfaceHolder.Callback callbacks[] = mSurfaceHolder.getCallbacks();
                             if (callbacks != null) {
                                 for (SurfaceHolder.Callback c : callbacks) {
@@ -1240,18 +1342,23 @@ public abstract class WallpaperService extends Service {
                                 // the state to get them to notice.
                                 if (DEBUG) Log.v(TAG, "onVisibilityChanged(true) at surface: "
                                         + this);
+                                Trace.beginSection("WPMS.Engine.onVisibilityChanged-true");
                                 onVisibilityChanged(true);
+                                Trace.endSection();
                             }
                             if (DEBUG) Log.v(TAG, "onVisibilityChanged(false) at surface: "
                                         + this);
+                            Trace.beginSection("WPMS.Engine.onVisibilityChanged-false");
                             onVisibilityChanged(false);
+                            Trace.endSection();
                         }
                     } finally {
                         mIsCreating = false;
                         mSurfaceCreated = true;
                         if (redrawNeeded) {
                             resetWindowPages();
-                            mSession.finishDrawing(mWindow, null /* postDrawTransaction */);
+                            mSession.finishDrawing(mWindow, null /* postDrawTransaction */,
+                                                   Integer.MAX_VALUE);
                             processLocalColors(mPendingXOffset, mPendingXOffsetStep);
                         }
                         reposition();
@@ -1265,16 +1372,9 @@ public abstract class WallpaperService extends Service {
             }
         }
 
-        private void scalePreview(Rect position) {
-            if (isPreview() && mPreviewSurfacePosition == null && position != null
-                    || mPreviewSurfacePosition != null
-                    && !mPreviewSurfacePosition.equals(position)) {
-                mPreviewSurfacePosition = position;
-                if (mSurfaceControl.isValid()) {
-                    reposition();
-                } else {
-                    updateSurface(false, false, false);
-                }
+        private void resizePreview(Rect position) {
+            if (position != null) {
+                mSurfaceHolder.setFixedSize(position.width(), position.height());
             }
         }
 
@@ -1321,17 +1421,24 @@ public abstract class WallpaperService extends Service {
             // Use window context of TYPE_WALLPAPER so client can access UI resources correctly.
             mDisplayContext = createDisplayContext(mDisplay)
                     .createWindowContext(TYPE_WALLPAPER, null /* options */);
-            mWallpaperDimAmount = mDisplayContext.getResources().getFloat(
+            mDefaultDimAmount = mDisplayContext.getResources().getFloat(
                     com.android.internal.R.dimen.config_wallpaperDimAmount);
+            mWallpaperDimAmount = mDefaultDimAmount;
+            mPreviousWallpaperDimAmount = mWallpaperDimAmount;
             mDisplayState = mDisplay.getState();
+            mDisplayInstallOrientation = mDisplay.getInstallOrientation();
 
             if (DEBUG) Log.v(TAG, "onCreate(): " + this);
+            Trace.beginSection("WPMS.Engine.onCreate");
             onCreate(mSurfaceHolder);
+            Trace.endSection();
 
             mInitializing = false;
 
             mReportedVisible = false;
+            Trace.beginSection("WPMS.Engine.updateSurface");
             updateSurface(false, false, false);
+            Trace.endSection();
         }
 
         /**
@@ -1398,6 +1505,8 @@ public abstract class WallpaperService extends Service {
                 mVisible = visible;
                 reportVisibility();
                 if (mReportedVisible) processLocalColors(mPendingXOffset, mPendingXOffsetStep);
+            } else {
+                AnimationHandler.requestAnimatorsEnabled(visible, this);
             }
         }
 
@@ -1418,14 +1527,16 @@ public abstract class WallpaperService extends Service {
                         // may have been destroyed so now we need to make
                         // sure it is re-created.
                         doOffsetsChanged(false);
-                        // force relayout to get new surface
-                        updateSurface(true, false, false);
+                        // It will check mSurfaceCreated so no need to force relayout.
+                        updateSurface(false /* forceRelayout */, false /* forceReport */,
+                                false /* redrawNeeded */);
                     }
                     onVisibilityChanged(visible);
                     if (mReportedVisible && mFrozenRequested) {
                         if (DEBUG) Log.v(TAG, "Freezing wallpaper after visibility update");
                         freeze();
                     }
+                    AnimationHandler.requestAnimatorsEnabled(visible, this);
                 }
             }
         }
@@ -1515,6 +1626,7 @@ public abstract class WallpaperService extends Service {
             float finalXOffsetStep = xOffsetStep;
             float finalXOffset = xOffset;
             mHandler.post(() -> {
+                Trace.beginSection("WallpaperService#processLocalColors");
                 resetWindowPages();
                 int xPage = xCurrentPage;
                 EngineWindowPage current;
@@ -1528,14 +1640,8 @@ public abstract class WallpaperService extends Service {
                         mLocalColorAreas.add(colorArea);
                         int colorPage = getRectFPage(colorArea, finalXOffsetStep);
                         EngineWindowPage currentPage = mWindowPages[colorPage];
-                        if (currentPage == null) {
-                            currentPage = new EngineWindowPage();
-                            currentPage.addArea(colorArea);
-                            mWindowPages[colorPage] = currentPage;
-                        } else {
-                            currentPage.setLastUpdateTime(0);
-                            currentPage.removeColor(colorArea);
-                        }
+                        currentPage.setLastUpdateTime(0);
+                        currentPage.removeColor(colorArea);
                     }
                     mLocalColorsToAdd.clear();
                 }
@@ -1550,16 +1656,8 @@ public abstract class WallpaperService extends Service {
                     xPage = mWindowPages.length - 1;
                 }
                 current = mWindowPages[xPage];
-                if (current == null) {
-                    if (DEBUG) Log.d(TAG, "making page " + xPage + " out of " + xPages);
-                    if (DEBUG) {
-                        Log.d(TAG, "xOffsetStep " + finalXOffsetStep + " xOffset "
-                                + finalXOffset);
-                    }
-                    current = new EngineWindowPage();
-                    mWindowPages[xPage] = current;
-                }
                 updatePage(current, xPage, xPages, finalXOffsetStep);
+                Trace.endSection();
             });
         }
 
@@ -1581,16 +1679,16 @@ public abstract class WallpaperService extends Service {
 
         void updatePage(EngineWindowPage currentPage, int pageIndx, int numPages,
                 float xOffsetStep) {
-            // to save creating a runnable, check twice
-            long current = System.currentTimeMillis();
+            // in case the clock is zero, we start with negative time
+            long current = SystemClock.elapsedRealtime() - DEFAULT_UPDATE_SCREENSHOT_DURATION;
             long lapsed = current - currentPage.getLastUpdateTime();
             // Always update the page when the last update time is <= 0
             // This is important especially when the device first boots
-            if (lapsed < DEFAULT_UPDATE_SCREENSHOT_DURATION
-                    && currentPage.getLastUpdateTime() > 0) {
+            if (lapsed < DEFAULT_UPDATE_SCREENSHOT_DURATION) {
                 return;
             }
             Surface surface = mSurfaceHolder.getSurface();
+            if (!surface.isValid()) return;
             boolean widthIsLarger = mSurfaceSize.x > mSurfaceSize.y;
             int smaller = widthIsLarger ? mSurfaceSize.x
                     : mSurfaceSize.y;
@@ -1631,6 +1729,7 @@ public abstract class WallpaperService extends Service {
         private void updatePageColors(EngineWindowPage page, int pageIndx, int numPages,
                 float xOffsetStep) {
             if (page.getBitmap() == null) return;
+            Trace.beginSection("WallpaperService#updatePageColors");
             if (DEBUG) {
                 Log.d(TAG, "updatePageColorsLocked for page " + pageIndx + " with areas "
                         + page.getAreas().size() + " and bitmap size of "
@@ -1651,7 +1750,7 @@ public abstract class WallpaperService extends Service {
                     Log.e(TAG, "Error creating page local color bitmap", e);
                     continue;
                 }
-                WallpaperColors color = WallpaperColors.fromBitmap(target);
+                WallpaperColors color = WallpaperColors.fromBitmap(target, mWallpaperDimAmount);
                 target.recycle();
                 WallpaperColors currentColor = page.getColors(area);
 
@@ -1676,6 +1775,7 @@ public abstract class WallpaperService extends Service {
                     }
                 }
             }
+            Trace.endSection();
         }
 
         private RectF generateSubRect(RectF in, int pageInx, int numPages) {
@@ -1704,10 +1804,7 @@ public abstract class WallpaperService extends Service {
             mResetWindowPages = false;
             mLastWindowPage = -1;
             for (int i = 0; i < mWindowPages.length; i++) {
-                EngineWindowPage page = mWindowPages[i];
-                if (page != null) {
-                    page.setLastUpdateTime(0L);
-                }
+                mWindowPages[i].setLastUpdateTime(0L);
             }
         }
 
@@ -1755,8 +1852,7 @@ public abstract class WallpaperService extends Service {
                 }
                 for (int i = 0; i < mWindowPages.length; i++) {
                     for (int j = 0; j < regions.size(); j++) {
-                        EngineWindowPage page = mWindowPages[i];
-                        if (page != null) page.removeArea(regions.get(j));
+                        mWindowPages[i].removeArea(regions.get(j));
                     }
                 }
             });
@@ -1937,9 +2033,7 @@ public abstract class WallpaperService extends Service {
 
             mScreenshotSize.set(mSurfaceSize.x, mSurfaceSize.y);
 
-            GraphicBuffer graphicBuffer = GraphicBuffer.createFromHardwareBuffer(hardwareBuffer);
-
-            t.setBuffer(mScreenshotSurfaceControl, graphicBuffer);
+            t.setBuffer(mScreenshotSurfaceControl, hardwareBuffer);
             t.setColorSpace(mScreenshotSurfaceControl, screenshotBuffer.getColorSpace());
             // Place on top everything else.
             t.setLayer(mScreenshotSurfaceControl, Integer.MAX_VALUE);
@@ -1970,6 +2064,8 @@ public abstract class WallpaperService extends Service {
             if (mDestroyed) {
                 return;
             }
+
+            AnimationHandler.removeRequestor(this);
 
             mDestroyed = true;
 
@@ -2152,14 +2248,15 @@ public abstract class WallpaperService extends Service {
         public void reportShown() {
             if (!mShownReported) {
                 mShownReported = true;
+                Trace.beginSection("WPMS.mConnection.engineShown");
                 try {
                     mConnection.engineShown(this);
                     Log.d(TAG, "Wallpaper has updated the surface:"
                             + mWallpaperManager.getWallpaperInfo());
                 } catch (RemoteException e) {
                     Log.w(TAG, "Wallpaper host disappeared", e);
-                    return;
                 }
+                Trace.endSection();
             }
         }
 
@@ -2185,14 +2282,41 @@ public abstract class WallpaperService extends Service {
             mDetached.set(true);
         }
 
-        public void scalePreview(Rect position) {
-            Message msg = mCaller.obtainMessageO(MSG_SCALE_PREVIEW, position);
+        public void applyDimming(float dimAmount) throws RemoteException {
+            Message msg = mCaller.obtainMessageI(MSG_UPDATE_DIMMING,
+                    Float.floatToIntBits(dimAmount));
+            mCaller.sendMessage(msg);
+        }
+
+        public void resizePreview(Rect position) {
+            Message msg = mCaller.obtainMessageO(MSG_RESIZE_PREVIEW, position);
             mCaller.sendMessage(msg);
         }
 
         @Nullable
         public SurfaceControl mirrorSurfaceControl() {
             return mEngine == null ? null : SurfaceControl.mirrorSurface(mEngine.mSurfaceControl);
+        }
+
+        private void doAttachEngine() {
+            Trace.beginSection("WPMS.onCreateEngine");
+            Engine engine = onCreateEngine();
+            Trace.endSection();
+            mEngine = engine;
+            Trace.beginSection("WPMS.mConnection.attachEngine-" + mDisplayId);
+            try {
+                mConnection.attachEngine(this, mDisplayId);
+            } catch (RemoteException e) {
+                engine.detach();
+                Log.w(TAG, "Wallpaper host disappeared", e);
+                return;
+            } finally {
+                Trace.endSection();
+            }
+            mActiveEngines.add(engine);
+            Trace.beginSection("WPMS.engine.attach");
+            engine.attach(this);
+            Trace.endSection();
         }
 
         private void doDetachEngine() {
@@ -2220,21 +2344,15 @@ public abstract class WallpaperService extends Service {
             }
             switch (message.what) {
                 case DO_ATTACH: {
-                    Engine engine = onCreateEngine();
-                    mEngine = engine;
-                    try {
-                        mConnection.attachEngine(this, mDisplayId);
-                    } catch (RemoteException e) {
-                        engine.detach();
-                        Log.w(TAG, "Wallpaper host disappeared", e);
-                        return;
-                    }
-                    mActiveEngines.add(engine);
-                    engine.attach(this);
+                    Trace.beginSection("WPMS.DO_ATTACH");
+                    doAttachEngine();
+                    Trace.endSection();
                     return;
                 }
                 case DO_DETACH: {
+                    Trace.beginSection("WPMS.DO_DETACH");
                     doDetachEngine();
+                    Trace.endSection();
                     return;
                 }
                 case DO_SET_DESIRED_SIZE: {
@@ -2255,8 +2373,11 @@ public abstract class WallpaperService extends Service {
                 case MSG_ZOOM:
                     mEngine.setZoom(Float.intBitsToFloat(message.arg1));
                     break;
-                case MSG_SCALE_PREVIEW:
-                    mEngine.scalePreview((Rect) message.obj);
+                case MSG_UPDATE_DIMMING:
+                    mEngine.updateWallpaperDimming(Float.intBitsToFloat(message.arg1));
+                    break;
+                case MSG_RESIZE_PREVIEW:
+                    mEngine.resizePreview((Rect) message.obj);
                     break;
                 case MSG_VISIBILITY_CHANGED:
                     if (DEBUG) Log.v(TAG, "Visibility change in " + mEngine
@@ -2272,6 +2393,7 @@ public abstract class WallpaperService extends Service {
                 } break;
                 case MSG_WINDOW_RESIZED: {
                     final boolean reportDraw = message.arg1 != 0;
+                    mEngine.updateConfiguration(((MergedConfiguration) message.obj));
                     mEngine.updateSurface(true, false, reportDraw);
                     mEngine.doOffsetsChanged(true);
                     mEngine.scaleAndCropScreenshot();
@@ -2311,7 +2433,9 @@ public abstract class WallpaperService extends Service {
                     }
                 } break;
                 case MSG_REPORT_SHOWN: {
+                    Trace.beginSection("WPMS.MSG_REPORT_SHOWN");
                     reportShown();
+                    Trace.endSection();
                 } break;
                 default :
                     Log.w(TAG, "Unknown message type " + message.what);
@@ -2334,9 +2458,11 @@ public abstract class WallpaperService extends Service {
         @Override
         public void attach(IWallpaperConnection conn, IBinder windowToken,
                 int windowType, boolean isPreview, int reqWidth, int reqHeight, Rect padding,
-                int displayId) {
+                int displayId, @SetWallpaperFlags int which) {
+            Trace.beginSection("WPMS.ServiceWrapper.attach");
             mEngineWrapper = new IWallpaperEngineWrapper(mTarget, conn, windowToken,
                     windowType, isPreview, reqWidth, reqHeight, padding, displayId);
+            Trace.endSection();
         }
 
         @Override
@@ -2347,16 +2473,20 @@ public abstract class WallpaperService extends Service {
 
     @Override
     public void onCreate() {
+        Trace.beginSection("WPMS.onCreate");
         super.onCreate();
+        Trace.endSection();
     }
 
     @Override
     public void onDestroy() {
+        Trace.beginSection("WPMS.onDestroy");
         super.onDestroy();
         for (int i=0; i<mActiveEngines.size(); i++) {
             mActiveEngines.get(i).detach();
         }
         mActiveEngines.clear();
+        Trace.endSection();
     }
 
     /**

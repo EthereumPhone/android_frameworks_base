@@ -19,14 +19,20 @@ package com.android.systemui.dump
 import android.content.Context
 import android.os.SystemClock
 import android.os.Trace
+import com.android.systemui.CoreStartable
 import com.android.systemui.R
 import com.android.systemui.dump.DumpHandler.Companion.PRIORITY_ARG_CRITICAL
-import com.android.systemui.dump.DumpHandler.Companion.PRIORITY_ARG_HIGH
 import com.android.systemui.dump.DumpHandler.Companion.PRIORITY_ARG_NORMAL
-import com.android.systemui.log.LogBuffer
+import com.android.systemui.dump.nano.SystemUIProtoDump
+import com.android.systemui.plugins.log.LogBuffer
+import com.android.systemui.shared.system.UncaughtExceptionPreHandlerManager
+import com.google.protobuf.nano.MessageNano
+import java.io.BufferedOutputStream
 import java.io.FileDescriptor
+import java.io.FileOutputStream
 import java.io.PrintWriter
 import javax.inject.Inject
+import javax.inject.Provider
 
 /**
  * Oversees SystemUI's output during bug reports (and dumpsys in general)
@@ -80,8 +86,21 @@ import javax.inject.Inject
 class DumpHandler @Inject constructor(
     private val context: Context,
     private val dumpManager: DumpManager,
-    private val logBufferEulogizer: LogBufferEulogizer
+    private val logBufferEulogizer: LogBufferEulogizer,
+    private val startables: MutableMap<Class<*>, Provider<CoreStartable>>,
+    private val uncaughtExceptionPreHandlerManager: UncaughtExceptionPreHandlerManager
 ) {
+    /**
+     * Registers an uncaught exception handler
+     */
+    fun init() {
+        uncaughtExceptionPreHandlerManager.registerHandler { _, e ->
+            if (e is Exception) {
+                logBufferEulogizer.record(e)
+            }
+        }
+    }
+
     /**
      * Dump the diagnostics! Behavior can be controlled via [args].
      */
@@ -96,9 +115,11 @@ class DumpHandler @Inject constructor(
             return
         }
 
-        when (parsedArgs.dumpPriority) {
-            PRIORITY_ARG_CRITICAL -> dumpCritical(fd, pw, parsedArgs)
-            PRIORITY_ARG_NORMAL -> dumpNormal(pw, parsedArgs)
+        when {
+            parsedArgs.dumpPriority == PRIORITY_ARG_CRITICAL -> dumpCritical(pw, parsedArgs)
+            parsedArgs.dumpPriority == PRIORITY_ARG_NORMAL && !parsedArgs.proto -> {
+                dumpNormal(pw, parsedArgs)
+            }
             else -> dumpParameterized(fd, pw, parsedArgs)
         }
 
@@ -109,31 +130,37 @@ class DumpHandler @Inject constructor(
 
     private fun dumpParameterized(fd: FileDescriptor, pw: PrintWriter, args: ParsedArgs) {
         when (args.command) {
-            "bugreport-critical" -> dumpCritical(fd, pw, args)
+            "bugreport-critical" -> dumpCritical(pw, args)
             "bugreport-normal" -> dumpNormal(pw, args)
-            "dumpables" -> dumpDumpables(fd, pw, args)
+            "dumpables" -> dumpDumpables(pw, args)
             "buffers" -> dumpBuffers(pw, args)
             "config" -> dumpConfig(pw)
             "help" -> dumpHelp(pw)
-            else -> dumpTargets(args.nonFlagArgs, fd, pw, args)
+            else -> {
+                if (args.proto) {
+                    dumpProtoTargets(args.nonFlagArgs, fd, args)
+                } else {
+                    dumpTargets(args.nonFlagArgs, pw, args)
+                }
+            }
         }
     }
 
-    private fun dumpCritical(fd: FileDescriptor, pw: PrintWriter, args: ParsedArgs) {
-        dumpManager.dumpDumpables(fd, pw, args.rawArgs)
+    private fun dumpCritical(pw: PrintWriter, args: ParsedArgs) {
+        dumpManager.dumpCritical(pw, args.rawArgs)
         dumpConfig(pw)
     }
 
     private fun dumpNormal(pw: PrintWriter, args: ParsedArgs) {
-        dumpManager.dumpBuffers(pw, args.tailLength)
+        dumpManager.dumpNormal(pw, args.rawArgs, args.tailLength)
         logBufferEulogizer.readEulogyIfPresent(pw)
     }
 
-    private fun dumpDumpables(fw: FileDescriptor, pw: PrintWriter, args: ParsedArgs) {
+    private fun dumpDumpables(pw: PrintWriter, args: ParsedArgs) {
         if (args.listOnly) {
             dumpManager.listDumpables(pw)
         } else {
-            dumpManager.dumpDumpables(fw, pw, args.rawArgs)
+            dumpManager.dumpDumpables(pw, args.rawArgs)
         }
     }
 
@@ -145,15 +172,34 @@ class DumpHandler @Inject constructor(
         }
     }
 
+    private fun dumpProtoTargets(
+            targets: List<String>,
+            fd: FileDescriptor,
+            args: ParsedArgs
+    ) {
+        val systemUIProto = SystemUIProtoDump()
+        if (targets.isNotEmpty()) {
+            for (target in targets) {
+                dumpManager.dumpProtoTarget(target, systemUIProto, args.rawArgs)
+            }
+        } else {
+            dumpManager.dumpProtoDumpables(systemUIProto, args.rawArgs)
+        }
+        val buffer = BufferedOutputStream(FileOutputStream(fd))
+        buffer.use {
+            it.write(MessageNano.toByteArray(systemUIProto))
+            it.flush()
+        }
+    }
+
     private fun dumpTargets(
         targets: List<String>,
-        fd: FileDescriptor,
         pw: PrintWriter,
         args: ParsedArgs
     ) {
         if (targets.isNotEmpty()) {
             for (target in targets) {
-                dumpManager.dumpTarget(target, fd, pw, args.rawArgs, args.tailLength)
+                dumpManager.dumpTarget(target, pw, args.rawArgs, args.tailLength)
             }
         } else {
             if (args.listOnly) {
@@ -173,12 +219,21 @@ class DumpHandler @Inject constructor(
         pw.println("SystemUiServiceComponents configuration:")
         pw.print("vendor component: ")
         pw.println(context.resources.getString(R.string.config_systemUIVendorServiceComponent))
-        dumpServiceList(pw, "global", R.array.config_systemUIServiceComponents)
+        val services: MutableList<String> = startables.keys
+                .map({ cls: Class<*> -> cls.simpleName })
+                .toMutableList()
+
+        services.add(context.resources.getString(R.string.config_systemUIVendorServiceComponent))
+        dumpServiceList(pw, "global", services.toTypedArray())
         dumpServiceList(pw, "per-user", R.array.config_systemUIServiceComponentsPerUser)
     }
 
     private fun dumpServiceList(pw: PrintWriter, type: String, resId: Int) {
-        val services: Array<String>? = context.resources.getStringArray(resId)
+        val services: Array<String> = context.resources.getStringArray(resId)
+        dumpServiceList(pw, type, services)
+    }
+
+    private fun dumpServiceList(pw: PrintWriter, type: String, services: Array<String>?) {
         pw.print(type)
         pw.print(": ")
         if (services == null) {
@@ -212,6 +267,7 @@ class DumpHandler @Inject constructor(
         pw.println("$ <invocation> buffers")
         pw.println("$ <invocation> bugreport-critical")
         pw.println("$ <invocation> bugreport-normal")
+        pw.println("$ <invocation> config")
         pw.println()
 
         pw.println("Targets can be listed:")
@@ -243,6 +299,7 @@ class DumpHandler @Inject constructor(
                             }
                         }
                     }
+                    PROTO -> pArgs.proto = true
                     "-t", "--tail" -> {
                         pArgs.tailLength = readArgument(iterator, arg) {
                             it.toInt()
@@ -254,6 +311,9 @@ class DumpHandler @Inject constructor(
                     "-h", "--help" -> {
                         pArgs.command = "help"
                     }
+                    // This flag is passed as part of the proto dump in Bug reports, we can ignore
+                    // it because this is our default behavior.
+                    "-a" -> {}
                     else -> {
                         throw ArgParseException("Unknown flag: $arg")
                     }
@@ -288,15 +348,21 @@ class DumpHandler @Inject constructor(
     companion object {
         const val PRIORITY_ARG = "--dump-priority"
         const val PRIORITY_ARG_CRITICAL = "CRITICAL"
-        const val PRIORITY_ARG_HIGH = "HIGH"
         const val PRIORITY_ARG_NORMAL = "NORMAL"
+        const val PROTO = "--proto"
     }
 }
 
-private val PRIORITY_OPTIONS =
-        arrayOf(PRIORITY_ARG_CRITICAL, PRIORITY_ARG_HIGH, PRIORITY_ARG_NORMAL)
+private val PRIORITY_OPTIONS = arrayOf(PRIORITY_ARG_CRITICAL, PRIORITY_ARG_NORMAL)
 
-private val COMMANDS = arrayOf("bugreport-critical", "bugreport-normal", "buffers", "dumpables")
+private val COMMANDS = arrayOf(
+        "bugreport-critical",
+        "bugreport-normal",
+        "buffers",
+        "dumpables",
+        "config",
+        "help"
+)
 
 private class ParsedArgs(
     val rawArgs: Array<String>,
@@ -306,6 +372,7 @@ private class ParsedArgs(
     var tailLength: Int = 0
     var command: String? = null
     var listOnly = false
+    var proto = false
 }
 
 class ArgParseException(message: String) : Exception(message)

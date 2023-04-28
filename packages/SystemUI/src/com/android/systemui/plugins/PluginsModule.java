@@ -16,8 +16,6 @@
 
 package com.android.systemui.plugins;
 
-import static com.android.systemui.util.concurrency.GlobalConcurrencyModule.PRE_HANDLER;
-
 import android.app.NotificationManager;
 import android.content.Context;
 import android.content.pm.PackageManager;
@@ -29,15 +27,14 @@ import com.android.systemui.dagger.qualifiers.Main;
 import com.android.systemui.shared.plugins.PluginActionManager;
 import com.android.systemui.shared.plugins.PluginEnabler;
 import com.android.systemui.shared.plugins.PluginInstance;
-import com.android.systemui.shared.plugins.PluginManager;
 import com.android.systemui.shared.plugins.PluginManagerImpl;
 import com.android.systemui.shared.plugins.PluginPrefs;
+import com.android.systemui.shared.system.UncaughtExceptionPreHandlerManager;
 import com.android.systemui.util.concurrency.GlobalConcurrencyModule;
 import com.android.systemui.util.concurrency.ThreadFactory;
 
 import java.util.Arrays;
 import java.util.List;
-import java.util.Optional;
 import java.util.concurrent.Executor;
 
 import javax.inject.Named;
@@ -107,13 +104,12 @@ public abstract class PluginsModule {
             Context context,
             PluginActionManager.Factory instanceManagerFactory,
             @Named(PLUGIN_DEBUG) boolean debug,
-            @Named(PRE_HANDLER)
-                    Optional<Thread.UncaughtExceptionHandler> uncaughtExceptionHandlerOptional,
+            UncaughtExceptionPreHandlerManager preHandlerManager,
             PluginEnabler pluginEnabler,
             PluginPrefs pluginPrefs,
             @Named(PLUGIN_PRIVILEGED) List<String> privilegedPlugins) {
         return new PluginManagerImpl(context, instanceManagerFactory, debug,
-                uncaughtExceptionHandlerOptional, pluginEnabler, pluginPrefs,
+                preHandlerManager, pluginEnabler, pluginPrefs,
                 privilegedPlugins);
     }
 

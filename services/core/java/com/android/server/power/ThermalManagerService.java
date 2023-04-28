@@ -139,17 +139,19 @@ public class ThermalManagerService extends SystemService {
             boolean halConnected = (mHalWrapper != null);
             if (!halConnected) {
                 mHalWrapper = new ThermalHal20Wrapper();
+                mHalWrapper.setCallback(this::onTemperatureChangedCallback);
                 halConnected = mHalWrapper.connectToHal();
             }
             if (!halConnected) {
                 mHalWrapper = new ThermalHal11Wrapper();
+                mHalWrapper.setCallback(this::onTemperatureChangedCallback);
                 halConnected = mHalWrapper.connectToHal();
             }
             if (!halConnected) {
                 mHalWrapper = new ThermalHal10Wrapper();
+                mHalWrapper.setCallback(this::onTemperatureChangedCallback);
                 halConnected = mHalWrapper.connectToHal();
             }
-            mHalWrapper.setCallback(this::onTemperatureChangedCallback);
             if (!halConnected) {
                 Slog.w(TAG, "No Thermal HAL service on this device");
                 return;
@@ -1088,6 +1090,10 @@ public class ThermalManagerService extends SystemService {
         @GuardedBy("mSamples")
         private long mLastForecastCallTimeMillis = 0;
 
+        private static final int INACTIVITY_THRESHOLD_MILLIS = 10000;
+        @VisibleForTesting
+        long mInactivityThresholdMillis = INACTIVITY_THRESHOLD_MILLIS;
+
         void updateSevereThresholds() {
             synchronized (mSamples) {
                 List<TemperatureThreshold> thresholds =
@@ -1107,13 +1113,12 @@ public class ThermalManagerService extends SystemService {
             }
         }
 
-        private static final int INACTIVITY_THRESHOLD_MILLIS = 10000;
         private static final int RING_BUFFER_SIZE = 30;
 
         private void updateTemperature() {
             synchronized (mSamples) {
                 if (SystemClock.elapsedRealtime() - mLastForecastCallTimeMillis
-                        < INACTIVITY_THRESHOLD_MILLIS) {
+                        < mInactivityThresholdMillis) {
                     // Trigger this again after a second as long as forecast has been called more
                     // recently than the inactivity timeout
                     mHandler.postDelayed(this::updateTemperature, 1000);
@@ -1199,7 +1204,7 @@ public class ThermalManagerService extends SystemService {
 
         float getForecast(int forecastSeconds) {
             synchronized (mSamples) {
-                mLastForecastCallTimeMillis = System.currentTimeMillis();
+                mLastForecastCallTimeMillis = SystemClock.elapsedRealtime();
                 if (mSamples.isEmpty()) {
                     updateTemperature();
                 }

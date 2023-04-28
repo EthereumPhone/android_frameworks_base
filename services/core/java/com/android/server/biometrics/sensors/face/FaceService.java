@@ -57,6 +57,7 @@ import com.android.internal.widget.LockPatternUtils;
 import com.android.server.ServiceThread;
 import com.android.server.SystemService;
 import com.android.server.biometrics.Utils;
+import com.android.server.biometrics.log.BiometricContext;
 import com.android.server.biometrics.sensors.ClientMonitorCallbackConverter;
 import com.android.server.biometrics.sensors.LockoutResetDispatcher;
 import com.android.server.biometrics.sensors.LockoutTracker;
@@ -286,13 +287,6 @@ public class FaceService extends SystemService {
             Utils.checkPermission(getContext(), USE_BIOMETRIC_INTERNAL);
             if (!Utils.isKeyguard(getContext(), opPackageName)) {
                 Slog.w(TAG, "detectFace called from non-sysui package: " + opPackageName);
-                return -1;
-            }
-
-            if (!Utils.isUserEncryptedOrLockdown(mLockPatternUtils, userId)) {
-                // If this happens, something in KeyguardUpdateMonitor is wrong. This should only
-                // ever be invoked when the user is encrypted or lockdown.
-                Slog.e(TAG, "detectFace invoked when user is not encrypted or lockdown");
                 return -1;
             }
 
@@ -645,7 +639,7 @@ public class FaceService extends SystemService {
                 try {
                     final SensorProps[] props = face.getSensorProps();
                     final FaceProvider provider = new FaceProvider(getContext(), props, instance,
-                            mLockoutResetDispatcher);
+                            mLockoutResetDispatcher, BiometricContext.getInstance(getContext()));
                     mServiceProviders.add(provider);
                 } catch (RemoteException e) {
                     Slog.e(TAG, "Remote exception in getSensorProps: " + fqName);

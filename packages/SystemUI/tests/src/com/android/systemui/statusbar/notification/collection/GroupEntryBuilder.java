@@ -18,6 +18,8 @@ package com.android.systemui.statusbar.notification.collection;
 
 import androidx.annotation.Nullable;
 
+import com.android.systemui.statusbar.notification.collection.listbuilder.NotifSection;
+
 import java.util.ArrayList;
 import java.util.List;
 
@@ -28,16 +30,20 @@ public class GroupEntryBuilder {
     private String mKey = "test_group_key";
     private long mCreationTime = 0;
     @Nullable private GroupEntry mParent = GroupEntry.ROOT_ENTRY;
-    private NotificationEntry mSummary = null;
-    private List<NotificationEntry> mChildren = new ArrayList<>();
+    private NotifSection mNotifSection;
+    @Nullable private NotificationEntry mSummary = null;
+    private final List<NotificationEntry> mChildren = new ArrayList<>();
 
     /** Builds a new instance of GroupEntry */
     public GroupEntry build() {
         GroupEntry ge = new GroupEntry(mKey, mCreationTime);
         ge.setParent(mParent);
+        ge.getAttachState().setSection(mNotifSection);
 
         ge.setSummary(mSummary);
-        mSummary.setParent(ge);
+        if (mSummary != null) {
+            mSummary.setParent(ge);
+        }
 
         for (NotificationEntry child : mChildren) {
             ge.addChild(child);
@@ -61,6 +67,11 @@ public class GroupEntryBuilder {
         return this;
     }
 
+    public GroupEntryBuilder setSection(@Nullable NotifSection section) {
+        mNotifSection = section;
+        return this;
+    }
+
     public GroupEntryBuilder setSummary(
             NotificationEntry summary) {
         mSummary = summary;
@@ -79,4 +90,7 @@ public class GroupEntryBuilder {
         return this;
     }
 
+    public static List<NotificationEntry> getRawChildren(GroupEntry groupEntry) {
+        return groupEntry.getRawChildren();
+    }
 }

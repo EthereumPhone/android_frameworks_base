@@ -19,9 +19,9 @@ package com.android.systemui.statusbar.phone
 import android.util.DisplayMetrics
 import android.view.View
 import com.android.internal.logging.nano.MetricsProto.MetricsEvent
-import com.android.systemui.log.LogBuffer
-import com.android.systemui.log.LogLevel
 import com.android.systemui.log.dagger.LSShadeTransitionLog
+import com.android.systemui.plugins.log.LogBuffer
+import com.android.systemui.plugins.log.LogLevel
 import com.android.systemui.statusbar.notification.row.ExpandableNotificationRow
 import com.android.systemui.statusbar.notification.row.ExpandableView
 import javax.inject.Inject
@@ -44,7 +44,7 @@ class LSShadeTransitionLogger @Inject constructor(
 
     fun logDragDownAborted() {
         buffer.log(TAG, LogLevel.INFO, {}, {
-            "The drag down was reset"
+            "The drag down was aborted and reset to 0f."
         })
     }
 
@@ -80,6 +80,12 @@ class LSShadeTransitionLogger @Inject constructor(
             0 /* velocityDp */)
         lockscreenGestureLogger.log(
             LockscreenGestureLogger.LockscreenUiEvent.LOCKSCREEN_PULL_SHADE_OPEN)
+    }
+
+    fun logDragDownAmountReset() {
+        buffer.log(TAG, LogLevel.DEBUG, {}, {
+            "The drag down amount has been reset to 0f."
+        })
     }
 
     fun logDefaultGoToFullShadeAnimation(delay: Long) {

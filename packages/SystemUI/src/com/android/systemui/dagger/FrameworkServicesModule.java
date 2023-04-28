@@ -17,68 +17,96 @@
 package com.android.systemui.dagger;
 
 import android.annotation.Nullable;
+import android.annotation.SuppressLint;
 import android.app.ActivityManager;
 import android.app.ActivityTaskManager;
 import android.app.AlarmManager;
 import android.app.IActivityManager;
 import android.app.IActivityTaskManager;
+import android.app.INotificationManager;
 import android.app.IWallpaperManager;
 import android.app.KeyguardManager;
 import android.app.NotificationManager;
 import android.app.StatsManager;
+import android.app.UiModeManager;
 import android.app.WallpaperManager;
 import android.app.admin.DevicePolicyManager;
+import android.app.job.JobScheduler;
 import android.app.role.RoleManager;
 import android.app.smartspace.SmartspaceManager;
 import android.app.trust.TrustManager;
+import android.bluetooth.BluetoothAdapter;
+import android.bluetooth.BluetoothManager;
+import android.content.ClipboardManager;
 import android.content.ContentResolver;
 import android.content.Context;
+import android.content.SharedPreferences;
 import android.content.om.OverlayManager;
 import android.content.pm.IPackageManager;
 import android.content.pm.LauncherApps;
 import android.content.pm.PackageManager;
 import android.content.pm.ShortcutManager;
+import android.content.res.AssetManager;
 import android.content.res.Resources;
 import android.hardware.SensorManager;
 import android.hardware.SensorPrivacyManager;
+import android.hardware.biometrics.BiometricManager;
+import android.hardware.camera2.CameraManager;
 import android.hardware.devicestate.DeviceStateManager;
+import android.hardware.display.AmbientDisplayConfiguration;
 import android.hardware.display.ColorDisplayManager;
 import android.hardware.display.DisplayManager;
 import android.hardware.face.FaceManager;
 import android.hardware.fingerprint.FingerprintManager;
+import android.hardware.input.InputManager;
 import android.media.AudioManager;
 import android.media.IAudioService;
 import android.media.MediaRouter2Manager;
+import android.media.projection.MediaProjectionManager;
 import android.media.session.MediaSessionManager;
 import android.net.ConnectivityManager;
 import android.net.NetworkScoreManager;
 import android.net.wifi.WifiManager;
 import android.os.BatteryStats;
+import android.os.PowerExemptionManager;
 import android.os.PowerManager;
 import android.os.ServiceManager;
+import android.os.SystemUpdateManager;
 import android.os.UserManager;
 import android.os.Vibrator;
+import android.os.storage.StorageManager;
 import android.permission.PermissionManager;
+import android.safetycenter.SafetyCenterManager;
 import android.service.dreams.DreamService;
 import android.service.dreams.IDreamManager;
 import android.telecom.TelecomManager;
+import android.telephony.CarrierConfigManager;
 import android.telephony.SubscriptionManager;
 import android.telephony.TelephonyManager;
+import android.view.Choreographer;
 import android.view.CrossWindowBlurListeners;
 import android.view.IWindowManager;
+import android.view.LayoutInflater;
 import android.view.ViewConfiguration;
 import android.view.WindowManager;
 import android.view.WindowManagerGlobal;
 import android.view.accessibility.AccessibilityManager;
+import android.view.accessibility.CaptioningManager;
 import android.view.inputmethod.InputMethodManager;
+import android.view.textclassifier.TextClassificationManager;
+
+import androidx.core.app.NotificationManagerCompat;
 
 import com.android.internal.app.IBatteryStats;
 import com.android.internal.appwidget.IAppWidgetService;
 import com.android.internal.jank.InteractionJankMonitor;
 import com.android.internal.statusbar.IStatusBarService;
 import com.android.internal.util.LatencyTracker;
+import com.android.systemui.Prefs;
+import com.android.systemui.dagger.qualifiers.Application;
 import com.android.systemui.dagger.qualifiers.DisplayId;
 import com.android.systemui.dagger.qualifiers.Main;
+import com.android.systemui.dagger.qualifiers.TestHarness;
 import com.android.systemui.shared.system.PackageManagerWrapper;
 
 import java.util.Optional;
@@ -91,6 +119,7 @@ import dagger.Provides;
 /**
  * Provides Non-SystemUI, Framework-Owned instances to the dependency graph.
  */
+@SuppressLint("NonInjectedService")
 @Module
 public class FrameworkServicesModule {
     @Provides
@@ -113,8 +142,33 @@ public class FrameworkServicesModule {
 
     @Provides
     @Singleton
+    static Optional<SystemUpdateManager> provideSystemUpdateManager(Context context) {
+        return Optional.ofNullable(context.getSystemService(SystemUpdateManager.class));
+    }
+
+    /** */
+    @Provides
+    public AmbientDisplayConfiguration provideAmbientDisplayConfiguration(Context context) {
+        return new AmbientDisplayConfiguration(context);
+    }
+
+    @Provides
+    @Singleton
     static AudioManager provideAudioManager(Context context) {
         return context.getSystemService(AudioManager.class);
+    }
+
+    @Provides
+    @Singleton
+    static CaptioningManager provideCaptioningManager(Context context) {
+        return context.getSystemService(CaptioningManager.class);
+    }
+
+    /** */
+    @Provides
+    @Singleton
+    public Choreographer providesChoreographer() {
+        return Choreographer.getInstance();
     }
 
     @Provides
@@ -201,28 +255,57 @@ public class FrameworkServicesModule {
     @Singleton
     static IDreamManager provideIDreamManager() {
         return IDreamManager.Stub.asInterface(
-                ServiceManager.checkService(DreamService.DREAM_SERVICE));
+                ServiceManager.getService(DreamService.DREAM_SERVICE));
     }
 
     @Provides
     @Singleton
     @Nullable
     static FaceManager provideFaceManager(Context context) {
-        return context.getSystemService(FaceManager.class);
-
+        if (context.getPackageManager().hasSystemFeature(PackageManager.FEATURE_FACE)) {
+            return context.getSystemService(FaceManager.class);
+        }
+        return null;
     }
 
     @Provides
     @Singleton
     @Nullable
     static FingerprintManager providesFingerprintManager(Context context) {
-        return context.getSystemService(FingerprintManager.class);
+        if (context.getPackageManager().hasSystemFeature(PackageManager.FEATURE_FINGERPRINT)) {
+            return context.getSystemService(FingerprintManager.class);
+        }
+        return null;
+    }
+
+    /**
+     * @return null if both faceManager and fingerprintManager are null.
+     */
+    @Provides
+    @Singleton
+    @Nullable
+    static BiometricManager providesBiometricManager(Context context,
+            @Nullable FaceManager faceManager, @Nullable FingerprintManager fingerprintManager) {
+        return faceManager == null && fingerprintManager == null ? null :
+                context.getSystemService(BiometricManager.class);
+    }
+
+    @Provides
+    @Singleton
+    static JobScheduler provideJobScheduler(Context context) {
+        return context.getSystemService(JobScheduler.class);
     }
 
     @Provides
     @Singleton
     static InteractionJankMonitor provideInteractionJankMonitor() {
         return InteractionJankMonitor.getInstance();
+    }
+
+    @Provides
+    @Singleton
+    static InputManager provideInputManager(Context context) {
+        return context.getSystemService(InputManager.class);
     }
 
     @Provides
@@ -282,6 +365,18 @@ public class FrameworkServicesModule {
         return context.getSystemService(LauncherApps.class);
     }
 
+    /** */
+    @Provides
+    @Singleton
+    public LayoutInflater providerLayoutInflater(Context context) {
+        return LayoutInflater.from(context);
+    }
+
+    @Provides
+    static MediaProjectionManager provideMediaProjectionManager(Context context) {
+        return context.getSystemService(MediaProjectionManager.class);
+    }
+
     @Provides
     static MediaRouter2Manager provideMediaRouter2Manager(Context context) {
         return MediaRouter2Manager.getInstance(context);
@@ -306,6 +401,20 @@ public class FrameworkServicesModule {
 
     @Provides
     @Singleton
+    static NotificationManagerCompat provideNotificationManagerCompat(Context context) {
+        return NotificationManagerCompat.from(context);
+    }
+
+    /** */
+    @Provides
+    @Singleton
+    public INotificationManager provideINotificationManager() {
+        return INotificationManager.Stub.asInterface(
+                ServiceManager.getService(Context.NOTIFICATION_SERVICE));
+    }
+
+    @Provides
+    @Singleton
     static PackageManager providePackageManager(Context context) {
         return context.getPackageManager();
     }
@@ -323,10 +432,37 @@ public class FrameworkServicesModule {
         return context.getSystemService(PowerManager.class);
     }
 
+    /** */
+    @Provides
+    @Singleton
+    static PowerExemptionManager providePowerExemptionManager(Context context) {
+        return context.getSystemService(PowerExemptionManager.class);
+    }
+
+    /** */
+    @Provides
+    @Main
+    public SharedPreferences provideSharePreferences(Context context) {
+        return Prefs.get(context);
+    }
+
+    /** */
+    @Provides
+    @Singleton
+    static UiModeManager provideUiModeManager(Context context) {
+        return context.getSystemService(UiModeManager.class);
+    }
+
     @Provides
     @Main
     static Resources provideResources(Context context) {
         return context.getResources();
+    }
+
+    @Provides
+    @Application
+    static AssetManager provideAssetManager(@Application Context context) {
+        return context.getAssets();
     }
 
     @Provides
@@ -361,7 +497,13 @@ public class FrameworkServicesModule {
 
     @Provides
     @Singleton
-    static SubscriptionManager provideSubcriptionManager(Context context) {
+    static StorageManager provideStorageManager(Context context) {
+        return context.getSystemService(StorageManager.class);
+    }
+
+    @Provides
+    @Singleton
+    static SubscriptionManager provideSubscriptionManager(Context context) {
         return context.getSystemService(SubscriptionManager.class);
     }
 
@@ -382,6 +524,13 @@ public class FrameworkServicesModule {
     @Singleton
     static TelephonyManager provideTelephonyManager(Context context) {
         return context.getSystemService(TelephonyManager.class);
+    }
+
+    @Provides
+    @Singleton
+    @TestHarness
+    static boolean provideIsTestHarness() {
+        return ActivityManager.isRunningInUserTestHarness();
     }
 
     @Provides
@@ -435,6 +584,12 @@ public class FrameworkServicesModule {
 
     @Provides
     @Singleton
+    static CarrierConfigManager provideCarrierConfigManager(Context context) {
+        return context.getSystemService(CarrierConfigManager.class);
+    }
+
+    @Provides
+    @Singleton
     static WindowManager provideWindowManager(Context context) {
         return context.getSystemService(WindowManager.class);
     }
@@ -451,7 +606,44 @@ public class FrameworkServicesModule {
 
     @Provides
     @Singleton
+    static ClipboardManager provideClipboardManager(Context context) {
+        return context.getSystemService(ClipboardManager.class);
+    }
+
+    @Provides
+    @Singleton
     static SmartspaceManager provideSmartspaceManager(Context context) {
         return context.getSystemService(SmartspaceManager.class);
+    }
+
+    @Provides
+    @Singleton
+    static SafetyCenterManager provideSafetyCenterManager(Context context) {
+        return context.getSystemService(SafetyCenterManager.class);
+    }
+
+    @Provides
+    @Singleton
+    static CameraManager provideCameraManager(Context context) {
+        return context.getSystemService(CameraManager.class);
+    }
+
+    @Provides
+    @Singleton
+    static BluetoothManager provideBluetoothManager(Context context) {
+        return context.getSystemService(BluetoothManager.class);
+    }
+
+    @Provides
+    @Singleton
+    @Nullable
+    static BluetoothAdapter provideBluetoothAdapter(BluetoothManager bluetoothManager) {
+        return bluetoothManager.getAdapter();
+    }
+
+    @Provides
+    @Singleton
+    static TextClassificationManager provideTextClassificationManager(Context context) {
+        return context.getSystemService(TextClassificationManager.class);
     }
 }

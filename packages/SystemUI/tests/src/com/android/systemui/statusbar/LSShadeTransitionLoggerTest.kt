@@ -4,7 +4,7 @@ import android.testing.AndroidTestingRunner
 import android.util.DisplayMetrics
 import androidx.test.filters.SmallTest
 import com.android.systemui.SysuiTestCase
-import com.android.systemui.log.LogBuffer
+import com.android.systemui.plugins.log.LogBuffer
 import com.android.systemui.statusbar.notification.row.ExpandableView
 import com.android.systemui.statusbar.phone.LSShadeTransitionLogger
 import com.android.systemui.statusbar.phone.LockscreenGestureLogger
@@ -30,7 +30,7 @@ class LSShadeTransitionLoggerTest : SysuiTestCase() {
     @Before
     fun setup() {
         logger = LSShadeTransitionLogger(
-                LogBuffer("Test", 10, 10, mock()),
+                LogBuffer("Test", 10, mock()),
                 gestureLogger,
                 displayMetrics)
     }

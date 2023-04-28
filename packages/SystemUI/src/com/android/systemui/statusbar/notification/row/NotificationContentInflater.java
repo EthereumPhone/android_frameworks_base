@@ -40,14 +40,14 @@ import com.android.internal.annotations.VisibleForTesting;
 import com.android.internal.widget.ImageMessageConsumer;
 import com.android.systemui.dagger.SysUISingleton;
 import com.android.systemui.dagger.qualifiers.Background;
-import com.android.systemui.media.MediaFeatureFlag;
+import com.android.systemui.media.controls.util.MediaFeatureFlag;
 import com.android.systemui.statusbar.InflationTask;
 import com.android.systemui.statusbar.NotificationRemoteInputManager;
 import com.android.systemui.statusbar.notification.ConversationNotificationProcessor;
 import com.android.systemui.statusbar.notification.InflationException;
 import com.android.systemui.statusbar.notification.collection.NotificationEntry;
 import com.android.systemui.statusbar.notification.row.wrapper.NotificationViewWrapper;
-import com.android.systemui.statusbar.phone.StatusBar;
+import com.android.systemui.statusbar.phone.CentralSurfaces;
 import com.android.systemui.statusbar.policy.InflatedSmartReplyState;
 import com.android.systemui.statusbar.policy.InflatedSmartReplyViewHolder;
 import com.android.systemui.statusbar.policy.SmartReplyStateInflater;
@@ -841,7 +841,7 @@ public class NotificationContentInflater implements NotificationRowContentBinder
             StatusBarNotification sbn = mEntry.getSbn();
             final String ident = sbn.getPackageName() + "/0x"
                     + Integer.toHexString(sbn.getId());
-            Log.e(StatusBar.TAG, "couldn't inflate view for notification " + ident, e);
+            Log.e(CentralSurfaces.TAG, "couldn't inflate view for notification " + ident, e);
             if (mCallback != null) {
                 mCallback.handleInflationException(mRow.getEntry(),
                         new InflationException("Couldn't inflate contentViews" + e));

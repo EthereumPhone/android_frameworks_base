@@ -18,6 +18,7 @@ package com.android.server.am;
 
 import static android.app.ActivityManager.START_SUCCESS;
 
+import static com.android.server.am.ActivityManagerDebugConfig.DEBUG_BROADCAST_LIGHT;
 import static com.android.server.am.ActivityManagerDebugConfig.TAG_AM;
 import static com.android.server.am.ActivityManagerDebugConfig.TAG_WITH_CLASS_NAME;
 
@@ -34,6 +35,7 @@ import android.os.Bundle;
 import android.os.IBinder;
 import android.os.PowerWhitelistManager;
 import android.os.PowerWhitelistManager.ReasonCode;
+import android.os.Process;
 import android.os.RemoteCallbackList;
 import android.os.RemoteException;
 import android.os.TransactionTooLargeException;
@@ -310,6 +312,33 @@ public final class PendingIntentRecord extends IIntentSender.Stub {
                 requiredPermission, null, null, 0, 0, 0, options);
     }
 
+    /**
+     * Return true if the activity options allows PendingIntent to use caller's BAL permission.
+     */
+    public static boolean isPendingIntentBalAllowedByPermission(
+            @Nullable ActivityOptions activityOptions) {
+        if (activityOptions == null) {
+            return false;
+        }
+        return activityOptions.isPendingIntentBackgroundActivityLaunchAllowedByPermission();
+    }
+
+    public static boolean isPendingIntentBalAllowedByCaller(
+            @Nullable ActivityOptions activityOptions) {
+        if (activityOptions == null) {
+            return ActivityOptions.PENDING_INTENT_BAL_ALLOWED_DEFAULT;
+        }
+        return isPendingIntentBalAllowedByCaller(activityOptions.toBundle());
+    }
+
+    private static boolean isPendingIntentBalAllowedByCaller(@Nullable Bundle options) {
+        if (options == null) {
+            return ActivityOptions.PENDING_INTENT_BAL_ALLOWED_DEFAULT;
+        }
+        return options.getBoolean(ActivityOptions.KEY_PENDING_INTENT_BACKGROUND_ACTIVITY_ALLOWED,
+                ActivityOptions.PENDING_INTENT_BAL_ALLOWED_DEFAULT);
+    }
+
     public int sendInner(int code, Intent intent, String resolvedType, IBinder allowlistToken,
             IIntentReceiver finishedReceiver, String requiredPermission, IBinder resultTo,
             String resultWho, int requestCode, int flagsMask, int flagsValues, Bundle options) {
@@ -389,6 +418,22 @@ public final class PendingIntentRecord extends IIntentSender.Stub {
 
         final int callingUid = Binder.getCallingUid();
         final int callingPid = Binder.getCallingPid();
+
+        // Only system senders can declare a broadcast to be alarm-originated.  We check
+        // this here rather than in the general case handling below to fail before the other
+        // invocation side effects such as allowlisting.
+        if (options != null && callingUid != Process.SYSTEM_UID
+                && key.type == ActivityManager.INTENT_SENDER_BROADCAST) {
+            if (options.containsKey(BroadcastOptions.KEY_ALARM_BROADCAST)) {
+                if (DEBUG_BROADCAST_LIGHT) {
+                    Slog.w(TAG, "Non-system caller " + callingUid
+                            + " may not flag broadcast as alarm-related");
+                }
+                throw new SecurityException(
+                        "Non-system callers may not flag broadcasts as alarm-related");
+            }
+        }
+
         final long origId = Binder.clearCallingIdentity();
 
         int res = START_SUCCESS;
@@ -431,7 +476,8 @@ public final class PendingIntentRecord extends IIntentSender.Stub {
             // temporarily allow receivers and services to open activities from background if the
             // PendingIntent.send() caller was foreground at the time of sendInner() call
             final boolean allowTrampoline = uid != callingUid
-                    && controller.mAtmInternal.isUidForeground(callingUid);
+                    && controller.mAtmInternal.isUidForeground(callingUid)
+                    && isPendingIntentBalAllowedByCaller(options);
 
             // note: we on purpose don't pass in the information about the PendingIntent's creator,
             // like pid or ProcessRecord, to the ActivityTaskManagerInternal calls below, because
@@ -481,7 +527,8 @@ public final class PendingIntentRecord extends IIntentSender.Stub {
                                 key.featureId, uid, callingUid, callingPid, finalIntent,
                                 resolvedType, finishedReceiver, code, null, null,
                                 requiredPermission, options, (finishedReceiver != null), false,
-                                userId, allowedByToken || allowTrampoline, bgStartsToken);
+                                userId, allowedByToken || allowTrampoline, bgStartsToken,
+                                null /* broadcastAllowList */);
                         if (sent == ActivityManager.BROADCAST_SUCCESS) {
                             sendFinish = false;
                         }

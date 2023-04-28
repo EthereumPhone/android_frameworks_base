@@ -16,7 +16,18 @@
 
 package com.android.systemui.flags
 
+import dagger.Binds
 import dagger.Module
 
-@Module
-object FlagsModule
+@Module(includes = [
+    FeatureFlagsReleaseStartableModule::class,
+    FlagsCommonModule::class,
+    ServerFlagReaderModule::class
+])
+abstract class FlagsModule {
+    @Binds
+    abstract fun bindsFeatureFlagRelease(impl: FeatureFlagsRelease): FeatureFlags
+
+    @Binds
+    abstract fun bindsRestarter(debugRestarter: FeatureFlagsReleaseRestarter): Restarter
+}

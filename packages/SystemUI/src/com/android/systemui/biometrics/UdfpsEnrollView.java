@@ -17,7 +17,8 @@
 package com.android.systemui.biometrics;
 
 import android.content.Context;
-import android.hardware.fingerprint.FingerprintSensorPropertiesInternal;
+import android.graphics.Rect;
+import android.graphics.RectF;
 import android.os.Handler;
 import android.os.Looper;
 import android.util.AttributeSet;
@@ -41,10 +42,13 @@ public class UdfpsEnrollView extends UdfpsAnimationView {
     @NonNull private ImageView mFingerprintView;
     @NonNull private ImageView mFingerprintProgressView;
 
+    private LayoutParams mProgressParams;
+    private float mProgressBarRadius;
+
     public UdfpsEnrollView(Context context, @Nullable AttributeSet attrs) {
         super(context, attrs);
-        mFingerprintDrawable = new UdfpsEnrollDrawable(mContext);
-        mFingerprintProgressDrawable = new UdfpsEnrollProgressBarDrawable(context);
+        mFingerprintDrawable = new UdfpsEnrollDrawable(mContext, attrs);
+        mFingerprintProgressDrawable = new UdfpsEnrollProgressBarDrawable(context, attrs);
         mHandler = new Handler(Looper.getMainLooper());
     }
 
@@ -57,17 +61,41 @@ public class UdfpsEnrollView extends UdfpsAnimationView {
     }
 
     @Override
+    void onSensorRectUpdated(RectF bounds) {
+        if (mUseExpandedOverlay) {
+            RectF converted = getBoundsRelativeToView(bounds);
+
+            mProgressParams = new LayoutParams(
+                    (int) (converted.width() + mProgressBarRadius * 2),
+                    (int) (converted.height() + mProgressBarRadius * 2));
+            mProgressParams.setMargins(
+                    (int) (converted.left - mProgressBarRadius),
+                    (int) (converted.top - mProgressBarRadius),
+                    (int) (converted.right + mProgressBarRadius),
+                    (int) (converted.bottom + mProgressBarRadius)
+            );
+
+            mFingerprintProgressView.setLayoutParams(mProgressParams);
+            super.onSensorRectUpdated(converted);
+        } else {
+            super.onSensorRectUpdated(bounds);
+        }
+    }
+
+    void setProgressBarRadius(float radius) {
+        mProgressBarRadius = radius;
+    }
+
+    @Override
     public UdfpsDrawable getDrawable() {
         return mFingerprintDrawable;
     }
 
-    void updateSensorLocation(@NonNull FingerprintSensorPropertiesInternal sensorProps) {
+    void updateSensorLocation(@NonNull Rect sensorBounds) {
         View fingerprintAccessibilityView = findViewById(R.id.udfps_enroll_accessibility_view);
-        final int sensorHeight = sensorProps.getLocation().sensorRadius * 2;
-        final int sensorWidth = sensorHeight;
         ViewGroup.LayoutParams params = fingerprintAccessibilityView.getLayoutParams();
-        params.width = sensorWidth;
-        params.height = sensorHeight;
+        params.width = sensorBounds.width();
+        params.height = sensorBounds.height();
         fingerprintAccessibilityView.setLayoutParams(params);
         fingerprintAccessibilityView.requestLayout();
     }

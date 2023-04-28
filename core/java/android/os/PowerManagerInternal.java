@@ -98,6 +98,16 @@ public abstract class PowerManagerInternal {
     }
 
     /**
+     * Used by the window manager to override the button brightness based on the
+     * current foreground activity.
+     *
+     * This method must only be called by the window manager.
+     *
+     * @param brightness The overridden brightness, or Float.NaN to disable the override.
+     */
+    public abstract void setButtonBrightnessOverrideFromWindowManager(float brightness);
+
+    /**
      * Used by the window manager to override the screen brightness based on the
      * current foreground activity.
      *
@@ -193,6 +203,21 @@ public abstract class PowerManagerInternal {
     public abstract void setDeviceIdleWhitelist(int[] appids);
 
     public abstract void setDeviceIdleTempWhitelist(int[] appids);
+
+    /**
+     * Updates the Low Power Standby allowlist.
+     *
+     * @param uids UIDs that are exempt from Low Power Standby restrictions
+     */
+    public abstract void setLowPowerStandbyAllowlist(int[] uids);
+
+    /**
+     * Used by LowPowerStandbyController to notify the power manager that Low Power Standby's
+     * active state has changed.
+     *
+     * @param active {@code true} to activate Low Power Standby, {@code false} to turn it off.
+     */
+    public abstract void setLowPowerStandbyActive(boolean active);
 
     public abstract void startUidChanges();
 
@@ -325,6 +350,21 @@ public abstract class PowerManagerInternal {
     /** Returns information about the last wakeup event. */
     public abstract PowerManager.WakeData getLastWakeup();
 
+    /** Returns information about the last event to go to sleep. */
+    public abstract PowerManager.SleepData getLastGoToSleep();
+
     /** Allows power button to intercept a power key button press. */
     public abstract boolean interceptPowerKeyDown(KeyEvent event);
+
+    /**
+     * Internal version of {@link android.os.PowerManager#nap} which allows for napping while the
+     * device is not awake.
+     */
+    public abstract void nap(long eventTime, boolean allowWake);
+
+    /**
+     * Returns true if ambient display is suppressed by any app with any token. This method will
+     * return false if ambient display is not available.
+     */
+    public abstract boolean isAmbientDisplaySuppressed();
 }

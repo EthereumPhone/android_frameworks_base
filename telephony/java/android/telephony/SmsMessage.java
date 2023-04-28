@@ -79,7 +79,7 @@ public class SmsMessage {
     public static final int ENCODING_8BIT = 2;
     public static final int ENCODING_16BIT = 3;
     /**
-     * @hide This value is not defined in global standard. Only in Korea, this is used.
+     * This value is not defined in global standard. Only in Korea, this is used.
      */
     public static final int ENCODING_KSC5601 = 4;
 
@@ -1017,6 +1017,26 @@ public class SmsMessage {
      */
     public boolean isReplyPathPresent() {
         return mWrappedSmsMessage.isReplyPathPresent();
+    }
+
+    /**
+     * Return the encoding type of a received SMS message, which is specified using ENCODING_*
+     * GSM: defined in android.telephony.SmsConstants
+     * CDMA: defined in android.telephony.cdma.UserData
+     *
+     * @hide
+     */
+    public int getReceivedEncodingType() {
+        return mWrappedSmsMessage.getReceivedEncodingType();
+    }
+
+    /**
+     * Check if format of the message is 3GPP.
+     *
+     * @hide
+     */
+    public boolean is3gpp() {
+        return (mWrappedSmsMessage instanceof com.android.internal.telephony.gsm.SmsMessage);
     }
 
     /**

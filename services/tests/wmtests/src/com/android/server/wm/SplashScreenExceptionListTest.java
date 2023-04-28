@@ -39,6 +39,7 @@ import org.junit.Test;
 
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
+import java.util.function.Consumer;
 
 /**
  * Test for the splash screen exception list
@@ -55,7 +56,16 @@ public class SplashScreenExceptionListTest {
     private DeviceConfig.Properties mInitialWindowManagerProperties;
     private final HandlerExecutor mExecutor = new HandlerExecutor(
             new Handler(Looper.getMainLooper()));
-    private final SplashScreenExceptionList mList = new SplashScreenExceptionList(mExecutor);
+    private final SplashScreenExceptionList mList = new SplashScreenExceptionList(mExecutor) {
+        @Override
+        void updateDeviceConfig(String rawList) {
+            super.updateDeviceConfig(rawList);
+            if (mOnUpdateDeviceConfig != null) {
+                mOnUpdateDeviceConfig.accept(rawList);
+            }
+        }
+    };
+    private Consumer<String> mOnUpdateDeviceConfig;
 
     @Before
     public void setUp() throws Exception {
@@ -95,25 +105,10 @@ public class SplashScreenExceptionListTest {
         assertIsNotException("com.test.splashscreen", VERSION_CODES.S_V2);
     }
 
-    private void setExceptionListAndWaitForCallback(String commaSeparatedList) {
-        CountDownLatch latch = new CountDownLatch(1);
-        DeviceConfig.OnPropertiesChangedListener onPropertiesChangedListener = (p) -> {
-            if (commaSeparatedList.equals(p.getString(KEY_SPLASH_SCREEN_EXCEPTION_LIST, null))) {
-                latch.countDown();
-            }
-        };
-        DeviceConfig.addOnPropertiesChangedListener(DeviceConfig.NAMESPACE_WINDOW_MANAGER,
-                mExecutor, onPropertiesChangedListener);
-        DeviceConfig.setProperty(DeviceConfig.NAMESPACE_WINDOW_MANAGER,
-                KEY_SPLASH_SCREEN_EXCEPTION_LIST, commaSeparatedList, false);
-        try {
-            assertTrue("Timed out waiting for DeviceConfig to be updated.",
-                    latch.await(1, TimeUnit.SECONDS));
-        } catch (InterruptedException e) {
-            Assert.fail(e.getMessage());
-        } finally {
-            DeviceConfig.removeOnPropertiesChangedListener(onPropertiesChangedListener);
-        }
+        // Not in list, up to T included
+        assertIsNotException("com.test.splashscreen", VERSION_CODES.S);
+        assertIsNotException("com.test.splashscreen", VERSION_CODES.R);
+        assertIsNotException("com.test.splashscreen", VERSION_CODES.TIRAMISU);
     }
 
     @Test
@@ -154,7 +149,7 @@ public class SplashScreenExceptionListTest {
     private void assertIsNotException(String packageName, int targetSdk,
             ApplicationInfo activityInfo) {
         assertFalse(String.format("%s (sdk=%d) should have not been considered as an exception",
-                packageName, targetSdk),
+                        packageName, targetSdk),
                 mList.isException(packageName, targetSdk, () -> activityInfo));
     }
 

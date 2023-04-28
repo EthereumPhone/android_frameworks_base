@@ -16,6 +16,7 @@
 package com.android.systemui.statusbar.notification;
 
 import android.app.Notification;
+import android.os.PowerManager;
 import android.os.SystemClock;
 import android.service.notification.StatusBarNotification;
 import android.util.Log;
@@ -24,7 +25,7 @@ import android.view.View;
 import com.android.systemui.DejankUtils;
 import com.android.systemui.statusbar.notification.collection.NotificationEntry;
 import com.android.systemui.statusbar.notification.row.ExpandableNotificationRow;
-import com.android.systemui.statusbar.phone.StatusBar;
+import com.android.systemui.statusbar.phone.CentralSurfaces;
 import com.android.wm.shell.bubbles.Bubbles;
 
 import java.util.Optional;
@@ -39,7 +40,7 @@ public final class NotificationClicker implements View.OnClickListener {
     private static final String TAG = "NotificationClicker";
 
     private final NotificationClickerLogger mLogger;
-    private final Optional<StatusBar> mStatusBarOptional;
+    private final Optional<CentralSurfaces> mCentralSurfacesOptional;
     private final Optional<Bubbles> mBubblesOptional;
     private final NotificationActivityStarter mNotificationActivityStarter;
 
@@ -53,11 +54,11 @@ public final class NotificationClicker implements View.OnClickListener {
 
     private NotificationClicker(
             NotificationClickerLogger logger,
-            Optional<StatusBar> statusBarOptional,
+            Optional<CentralSurfaces> centralSurfacesOptional,
             Optional<Bubbles> bubblesOptional,
             NotificationActivityStarter notificationActivityStarter) {
         mLogger = logger;
-        mStatusBarOptional = statusBarOptional;
+        mCentralSurfacesOptional = centralSurfacesOptional;
         mBubblesOptional = bubblesOptional;
         mNotificationActivityStarter = notificationActivityStarter;
     }
@@ -69,8 +70,9 @@ public final class NotificationClicker implements View.OnClickListener {
             return;
         }
 
-        mStatusBarOptional.ifPresent(statusBar -> statusBar.wakeUpIfDozing(
-                SystemClock.uptimeMillis(), v, "NOTIFICATION_CLICK"));
+        mCentralSurfacesOptional.ifPresent(centralSurfaces -> centralSurfaces.wakeUpIfDozing(
+                SystemClock.uptimeMillis(), v, "NOTIFICATION_CLICK",
+                PowerManager.WAKE_REASON_GESTURE));
 
         final ExpandableNotificationRow row = (ExpandableNotificationRow) v;
         final NotificationEntry entry = row.getEntry();
@@ -104,7 +106,7 @@ public final class NotificationClicker implements View.OnClickListener {
             mBubblesOptional.get().collapseStack();
         }
 
-        mNotificationActivityStarter.onNotificationClicked(entry.getSbn(), row);
+        mNotificationActivityStarter.onNotificationClicked(entry, row);
     }
 
     private boolean isMenuVisible(ExpandableNotificationRow row) {
@@ -137,13 +139,13 @@ public final class NotificationClicker implements View.OnClickListener {
 
         /** Builds an instance. */
         public NotificationClicker build(
-                Optional<StatusBar> statusBarOptional,
+                Optional<CentralSurfaces> centralSurfacesOptional,
                 Optional<Bubbles> bubblesOptional,
                 NotificationActivityStarter notificationActivityStarter
         ) {
             return new NotificationClicker(
                     mLogger,
-                    statusBarOptional,
+                    centralSurfacesOptional,
                     bubblesOptional,
                     notificationActivityStarter);
         }

@@ -17,6 +17,7 @@
 package android.app;
 
 import android.app.ActivityManager;
+import android.app.ICompatCameraControlCallback;
 import android.app.IRequestFinishCallback;
 import android.app.PictureInPictureParams;
 import android.content.ComponentName;
@@ -37,6 +38,7 @@ import com.android.internal.policy.IKeyguardDismissCallback;
 interface IActivityClientController {
     oneway void activityIdle(in IBinder token, in Configuration config, in boolean stopProfiling);
     oneway void activityResumed(in IBinder token, in boolean handleSplashScreenExit);
+    oneway void activityRefreshed(in IBinder token);
     /**
      * This call is not one-way because {@link #activityPaused()) is not one-way, or
      * the top-resumed-lost could be reported after activity paused.
@@ -52,24 +54,36 @@ interface IActivityClientController {
     oneway void activityStopped(in IBinder token, in Bundle state,
             in PersistableBundle persistentState, in CharSequence description);
     oneway void activityDestroyed(in IBinder token);
+    oneway void activityLocalRelaunch(in IBinder token);
     oneway void activityRelaunched(in IBinder token);
 
     oneway void reportSizeConfigurations(in IBinder token,
             in SizeConfigurationBuckets sizeConfigurations);
     boolean moveActivityTaskToBack(in IBinder token, boolean nonRoot);
     boolean shouldUpRecreateTask(in IBinder token, in String destAffinity);
-    boolean navigateUpTo(in IBinder token, in Intent target, int resultCode,
-            in Intent resultData);
+    boolean navigateUpTo(in IBinder token, in Intent target, in String resolvedType,
+            int resultCode, in Intent resultData);
     boolean releaseActivityInstance(in IBinder token);
     boolean finishActivity(in IBinder token, int code, in Intent data, int finishTask);
     boolean finishActivityAffinity(in IBinder token);
     /** Finish all activities that were started for result from the specified activity. */
     void finishSubActivity(in IBinder token, in String resultWho, int requestCode);
+    /**
+     * Indicates that when the activity finsihes, the result should be immediately sent to the
+     * originating activity. Must only be invoked during MediaProjection setup.
+     */
+    @JavaPassthrough(annotation="@android.annotation.RequiresPermission(android.Manifest.permission.MANAGE_MEDIA_PROJECTION)")
+    void setForceSendResultForMediaProjection(in IBinder token);
 
     boolean isTopOfTask(in IBinder token);
     boolean willActivityBeVisible(in IBinder token);
     int getDisplayId(in IBinder activityToken);
     int getTaskForActivity(in IBinder token, in boolean onlyRoot);
+    /**
+     * Returns the {@link Configuration} of the task which hosts the Activity, or {@code null} if
+     * the task {@link Configuration} cannot be obtained.
+     */
+    Configuration getTaskConfiguration(in IBinder activityToken);
     IBinder getActivityTokenBelow(IBinder token);
     ComponentName getCallingActivity(in IBinder token);
     String getCallingPackage(in IBinder token);
@@ -87,6 +101,7 @@ interface IActivityClientController {
 
     boolean enterPictureInPictureMode(in IBinder token, in PictureInPictureParams params);
     void setPictureInPictureParams(in IBinder token, in PictureInPictureParams params);
+    oneway void setShouldDockBigOverlays(in IBinder token, in boolean shouldDockBigOverlays);
     void toggleFreeformWindowingMode(in IBinder token);
 
     oneway void startLockTaskModeByToken(in IBinder token);
@@ -111,11 +126,11 @@ interface IActivityClientController {
      * calls, so this method should be the same as them to keep the invocation order.
      */
     void overridePendingTransition(in IBinder token, in String packageName,
-            int enterAnim, int exitAnim);
+            int enterAnim, int exitAnim, int backgroundColor);
     int setVrMode(in IBinder token, boolean enabled, in ComponentName packageName);
 
-    /** See {@link android.app.Activity#setDisablePreviewScreenshots}. */
-    oneway void setDisablePreviewScreenshots(in IBinder token, boolean disable);
+    /** See {@link android.app.Activity#setRecentsScreenshotEnabled}. */
+    oneway void setRecentsScreenshotEnabled(in IBinder token, boolean enabled);
 
     /**
      * It should only be called from home activity to remove its outdated snapshot. The home
@@ -135,12 +150,22 @@ interface IActivityClientController {
     void unregisterRemoteAnimations(in IBinder token);
 
     /**
-     * Reports that an Activity received a back key press when there were no additional activities
-     * on the back stack.
+     * Reports that an Activity received a back key press.
      */
-    oneway void onBackPressedOnTaskRoot(in IBinder activityToken,
+    oneway void onBackPressed(in IBinder activityToken,
             in IRequestFinishCallback callback);
 
     /** Reports that the splash screen view has attached to activity.  */
     oneway void splashScreenAttached(in IBinder token);
+
+    /**
+     * Shows or hides a Camera app compat toggle for stretched issues with the requested state.
+     *
+     * @param token The token for the window that needs a control.
+     * @param showControl Whether the control should be shown or hidden.
+     * @param transformationApplied Whether the treatment is already applied.
+     * @param callback The callback executed when the user clicks on a control.
+     */
+    oneway void requestCompatCameraControl(in IBinder token, boolean showControl,
+            boolean transformationApplied, in ICompatCameraControlCallback callback);
 }

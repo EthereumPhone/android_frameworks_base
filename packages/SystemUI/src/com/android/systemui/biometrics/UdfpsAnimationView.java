@@ -33,9 +33,14 @@ import android.widget.FrameLayout;
  * - sends sensor rect updates to fingerprint drawable
  * - optionally can override dozeTimeTick to adjust views for burn-in mitigation
  */
-abstract class UdfpsAnimationView extends FrameLayout {
-    // mAlpha takes into consideration the status bar expansion amount to fade out icon when
-    // the status bar is expanded
+public abstract class UdfpsAnimationView extends FrameLayout {
+    private float mDialogSuggestedAlpha = 1f;
+    private float mNotificationShadeExpansion = 0f;
+
+    // Used for Udfps ellipse detection when flag is true, set by AnimationViewController
+    boolean mUseExpandedOverlay = false;
+
+    // mAlpha takes into consideration the status bar expansion amount and dialog suggested alpha
     private int mAlpha;
     boolean mPauseAuth;
 
@@ -52,13 +57,13 @@ abstract class UdfpsAnimationView extends FrameLayout {
         getDrawable().onSensorRectUpdated(bounds);
     }
 
-    void onIlluminationStarting() {
-        getDrawable().setIlluminationShowing(true);
+    void onDisplayConfiguring() {
+        getDrawable().setDisplayConfigured(true);
         getDrawable().invalidateSelf();
     }
 
-    void onIlluminationStopped() {
-        getDrawable().setIlluminationShowing(false);
+    void onDisplayUnconfigured() {
+        getDrawable().setDisplayConfigured(false);
         getDrawable().invalidateSelf();
     }
 
@@ -92,6 +97,10 @@ abstract class UdfpsAnimationView extends FrameLayout {
     }
 
     int calculateAlpha() {
+        int alpha = expansionToAlpha(mNotificationShadeExpansion);
+        alpha *= mDialogSuggestedAlpha;
+        mAlpha = alpha;
+
         return mPauseAuth ? mAlpha : 255;
     }
 
@@ -111,8 +120,44 @@ abstract class UdfpsAnimationView extends FrameLayout {
         return (int) ((1 - percent) * 255);
     }
 
+    /**
+     * Converts coordinates of RectF relative to the screen to coordinates relative to this view.
+     *
+     * @param bounds RectF based off screen coordinates in current orientation
+     */
+    RectF getBoundsRelativeToView(RectF bounds) {
+        int[] pos = getLocationOnScreen();
+
+        RectF output = new RectF(
+                bounds.left - pos[0],
+                bounds.top - pos[1],
+                bounds.right - pos[0],
+                bounds.bottom - pos[1]
+        );
+
+        return output;
+    }
+
+    /**
+     * Set the suggested alpha based on whether a dialog was recently shown or hidden.
+     * @param dialogSuggestedAlpha value from 0f to 1f.
+     */
+    public void setDialogSuggestedAlpha(float dialogSuggestedAlpha) {
+        mDialogSuggestedAlpha = dialogSuggestedAlpha;
+        updateAlpha();
+    }
+
+    public float getDialogSuggestedAlpha() {
+        return mDialogSuggestedAlpha;
+    }
+
+    /**
+     * Sets the amount the notification shade is expanded. This will influence the opacity of the
+     * this visual affordance.
+     * @param expansion amount the shade has expanded from 0f to 1f.
+     */
     public void onExpansionChanged(float expansion) {
-        mAlpha = expansionToAlpha(expansion);
+        mNotificationShadeExpansion = expansion;
         updateAlpha();
     }
 

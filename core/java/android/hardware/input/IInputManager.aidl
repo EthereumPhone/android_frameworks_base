@@ -20,6 +20,7 @@ import android.graphics.Rect;
 import android.hardware.input.InputDeviceIdentifier;
 import android.hardware.input.KeyboardLayout;
 import android.hardware.input.IInputDevicesChangedListener;
+import android.hardware.input.IInputDeviceBatteryListener;
 import android.hardware.input.ITabletModeChangedListener;
 import android.hardware.input.TouchCalibration;
 import android.os.CombinedVibration;
@@ -50,13 +51,22 @@ interface IInputManager {
     // Reports whether the hardware supports the given keys; returns true if successful
     boolean hasKeys(int deviceId, int sourceMask, in int[] keyCodes, out boolean[] keyExists);
 
+    // Returns the keyCode produced when pressing the key at the specified location, given the
+    // active keyboard layout.
+    int getKeyCodeForKeyLocation(int deviceId, in int locationKeyCode);
+
     // Temporarily changes the pointer speed.
     void tryPointerSpeed(int speed);
 
-    // Injects an input event into the system.  To inject into windows owned by other
-    // applications, the caller must have the INJECT_EVENTS permission.
+    // Injects an input event into the system. The caller must have the INJECT_EVENTS permssion.
+    // This method exists only for compatibility purposes and may be removed in a future release.
     @UnsupportedAppUsage
     boolean injectInputEvent(in InputEvent ev, int mode);
+
+    // Injects an input event into the system. The caller must have the INJECT_EVENTS permission.
+    // The caller can target windows owned by a certain UID by providing a valid UID, or by
+    // providing {@link android.os.Process#INVALID_UID} to target all windows.
+    boolean injectInputEventToTarget(in InputEvent ev, int mode, int targetUid);
 
     VerifiedInputEvent verifyInputEvent(in InputEvent ev);
 
@@ -108,7 +118,7 @@ interface IInputManager {
     oneway void requestPointerCapture(IBinder inputChannelToken, boolean enabled);
 
     /** Create an input monitor for gestures. */
-    InputMonitor monitorGestureInput(String name, int displayId);
+    InputMonitor monitorGestureInput(IBinder token, String name, int displayId);
 
     // Add a runtime association between the input port and the display port. This overrides any
     // static associations.
@@ -118,9 +128,9 @@ interface IInputManager {
     void removePortAssociation(in String inputPort);
 
     // Add a runtime association between the input device and display.
-    void addUniqueIdAssociation(in String inputDeviceName, in String displayUniqueId);
+    void addUniqueIdAssociation(in String inputPort, in String displayUniqueId);
     // Remove the runtime association between the input device and display.
-    void removeUniqueIdAssociation(in String inputDeviceName);
+    void removeUniqueIdAssociation(in String inputPort);
 
     InputSensorInfo[] getSensorList(int deviceId);
 
@@ -144,4 +154,15 @@ interface IInputManager {
     void openLightSession(int deviceId, String opPkg, in IBinder token);
 
     void closeLightSession(int deviceId, in IBinder token);
+
+    void cancelCurrentTouch();
+
+    void registerBatteryListener(int deviceId, IInputDeviceBatteryListener listener);
+
+    void unregisterBatteryListener(int deviceId, IInputDeviceBatteryListener listener);
+
+    @EnforcePermission("MONITOR_INPUT")
+    @JavaPassthrough(annotation="@android.annotation.RequiresPermission(value = "
+            + "android.Manifest.permission.MONITOR_INPUT)")
+    void pilferPointers(IBinder inputChannelToken);
 }

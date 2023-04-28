@@ -16,6 +16,7 @@
 
 package android.app;
 
+import android.Manifest;
 import android.annotation.IntDef;
 import android.annotation.NonNull;
 import android.annotation.Nullable;
@@ -23,23 +24,43 @@ import android.annotation.RequiresPermission;
 import android.annotation.SystemApi;
 import android.annotation.SystemService;
 import android.annotation.TestApi;
+import android.app.compat.CompatChanges;
+import android.compat.annotation.ChangeId;
+import android.compat.annotation.EnabledSince;
 import android.compat.annotation.UnsupportedAppUsage;
+import android.content.ComponentName;
 import android.content.Context;
+import android.graphics.drawable.Icon;
+import android.media.INearbyMediaDevicesProvider;
+import android.media.INearbyMediaDevicesUpdateCallback;
+import android.media.MediaRoute2Info;
+import android.media.NearbyDevice;
+import android.media.NearbyMediaDevicesProvider;
 import android.os.Binder;
 import android.os.Build;
 import android.os.Bundle;
 import android.os.IBinder;
 import android.os.RemoteException;
 import android.os.ServiceManager;
+import android.os.UserHandle;
 import android.util.Pair;
 import android.util.Slog;
 import android.view.View;
 
+import com.android.internal.statusbar.IAddTileResultCallback;
 import com.android.internal.statusbar.IStatusBarService;
+import com.android.internal.statusbar.IUndoMediaTransferCallback;
 import com.android.internal.statusbar.NotificationVisibility;
 
 import java.lang.annotation.Retention;
 import java.lang.annotation.RetentionPolicy;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.Objects;
+import java.util.Set;
+import java.util.concurrent.Executor;
+import java.util.function.Consumer;
 
 /**
  * Allows an app to control the status bar.
@@ -159,7 +180,7 @@ public class StatusBarManager {
      *
      * @hide
      */
-    public static final int DEFAULT_SETUP_DISABLE2_FLAGS = DISABLE2_ROTATE_SUGGESTIONS;
+    public static final int DEFAULT_SETUP_DISABLE2_FLAGS = DISABLE2_NONE;
 
     /**
      * disable flags to be applied when the device is sim-locked.
@@ -170,6 +191,8 @@ public class StatusBarManager {
     public static final int NAVIGATION_HINT_BACK_ALT      = 1 << 0;
     /** @hide */
     public static final int NAVIGATION_HINT_IME_SHOWN     = 1 << 1;
+    /** @hide */
+    public static final int NAVIGATION_HINT_IME_SWITCHER_SHOWN = 1 << 2;
 
     /** @hide */
     public static final int WINDOW_STATUS_BAR = 1;
@@ -532,6 +555,305 @@ public class StatusBarManager {
         }
     }
 
+    /**
+     * Sets an active {@link android.service.quicksettings.TileService} to listening state
+     *
+     * The {@code componentName}'s package must match the calling package.
+     *
+     * @param componentName the tile to set into listening state
+     * @see android.service.quicksettings.TileService#requestListeningState
+     * @hide
+     */
+    public void requestTileServiceListeningState(@NonNull ComponentName componentName) {
+        Objects.requireNonNull(componentName);
+        try {
+            getService().requestTileServiceListeningState(componentName, mContext.getUserId());
+        } catch (RemoteException ex) {
+            throw ex.rethrowFromSystemServer();
+        }
+    }
+
+    /**
+     * Request to the user to add a {@link android.service.quicksettings.TileService}
+     * to the set of current QS tiles.
+     * <p>
+     * Calling this will prompt the user to decide whether they want to add the shown
+     * {@link android.service.quicksettings.TileService} to their current tiles. The user can
+     * deny the request and the system can stop processing requests for a given
+     * {@link ComponentName} after a number of requests.
+     * <p>
+     * The request will show to the user information about the tile:
+     * <ul>
+     *     <li>Application name</li>
+     *     <li>Label for the tile</li>
+     *     <li>Icon for the tile</li>
+     * </ul>
+     * <p>
+     * The user for which this will be added is determined from the {@link Context} used to retrieve
+     * this service, and must match the current user. The requesting application must be in the
+     * foreground ({@link ActivityManager.RunningAppProcessInfo#IMPORTANCE_FOREGROUND}
+     * and the {@link android.service.quicksettings.TileService} must be exported.
+     *
+     * Note: the system can choose to auto-deny a request if the user has denied that specific
+     * request (user, ComponentName) enough times before.
+     *
+     * @param tileServiceComponentName {@link ComponentName} of the
+     *        {@link android.service.quicksettings.TileService} for the request.
+     * @param tileLabel label of the tile to show to the user.
+     * @param icon icon to use in the tile shown to the user.
+     * @param resultExecutor an executor to run the callback on
+     * @param resultCallback callback to indicate the {@link RequestResult}.
+     *
+     * @see android.service.quicksettings.TileService
+     */
+    public void requestAddTileService(
+            @NonNull ComponentName tileServiceComponentName,
+            @NonNull CharSequence tileLabel,
+            @NonNull Icon icon,
+            @NonNull Executor resultExecutor,
+            @NonNull Consumer<Integer> resultCallback
+    ) {
+        Objects.requireNonNull(tileServiceComponentName);
+        Objects.requireNonNull(tileLabel);
+        Objects.requireNonNull(icon);
+        Objects.requireNonNull(resultExecutor);
+        Objects.requireNonNull(resultCallback);
+        if (!tileServiceComponentName.getPackageName().equals(mContext.getPackageName())) {
+            resultExecutor.execute(
+                    () -> resultCallback.accept(TILE_ADD_REQUEST_ERROR_MISMATCHED_PACKAGE));
+            return;
+        }
+        int userId = mContext.getUserId();
+        RequestResultCallback callbackProxy = new RequestResultCallback(resultExecutor,
+                resultCallback);
+        IStatusBarService svc = getService();
+        try {
+            svc.requestAddTile(
+                    tileServiceComponentName,
+                    tileLabel,
+                    icon,
+                    userId,
+                    callbackProxy
+            );
+        } catch (RemoteException ex) {
+            ex.rethrowFromSystemServer();
+        }
+    }
+
+    /**
+     * @hide
+     * @param packageName
+     */
+    @TestApi
+    public void cancelRequestAddTile(@NonNull String packageName) {
+        Objects.requireNonNull(packageName);
+        IStatusBarService svc = getService();
+        try {
+            svc.cancelRequestAddTile(packageName);
+        } catch (RemoteException e) {
+            e.rethrowFromSystemServer();
+        }
+    }
+
+    /**
+     * Sets or removes the navigation bar mode.
+     *
+     * @param navBarMode the mode of the navigation bar to be set.
+     *
+     * @hide
+     */
+    @SystemApi
+    @RequiresPermission(android.Manifest.permission.STATUS_BAR)
+    public void setNavBarMode(@NavBarMode int navBarMode) {
+        if (navBarMode != NAV_BAR_MODE_DEFAULT && navBarMode != NAV_BAR_MODE_KIDS) {
+            throw new IllegalArgumentException("Supplied navBarMode not supported: " + navBarMode);
+        }
+
+        try {
+            final IStatusBarService svc = getService();
+            if (svc != null) {
+                svc.setNavBarMode(navBarMode);
+            }
+        } catch (RemoteException e) {
+            throw e.rethrowFromSystemServer();
+        }
+    }
+
+    /**
+     * Gets the navigation bar mode. Returns default value if no mode is set.
+     *
+     * @hide
+     */
+    @SystemApi
+    @RequiresPermission(android.Manifest.permission.STATUS_BAR)
+    public @NavBarMode int getNavBarMode() {
+        int navBarMode = NAV_BAR_MODE_DEFAULT;
+        try {
+            final IStatusBarService svc = getService();
+            if (svc != null) {
+                navBarMode = svc.getNavBarMode();
+            }
+        } catch (RemoteException e) {
+            throw e.rethrowFromSystemServer();
+        }
+        return navBarMode;
+    }
+
+    /**
+     * Notifies the system of a new media tap-to-transfer state for the <b>sender</b> device.
+     *
+     * <p>The callback should only be provided for the {@link
+     * MEDIA_TRANSFER_SENDER_STATE_TRANSFER_TO_RECEIVER_SUCCEEDED} or {@link
+     * MEDIA_TRANSFER_SENDER_STATE_TRANSFER_TO_THIS_DEVICE_SUCCEEDED} states, since those are the
+     * only states where an action can be un-done.
+     *
+     * @param displayState the new state for media tap-to-transfer.
+     * @param routeInfo the media route information for the media being transferred.
+     * @param undoExecutor an executor to run the callback on and must be provided if the
+     *                     callback is non-null.
+     * @param undoCallback a callback that will be triggered if the user elects to undo a media
+     *                     transfer.
+     *
+     * @throws IllegalArgumentException if an undo callback is provided for states that are not a
+     *   succeeded state.
+     * @throws IllegalArgumentException if an executor is not provided when a callback is.
+     *
+     * @hide
+     */
+    @SystemApi
+    @RequiresPermission(Manifest.permission.MEDIA_CONTENT_CONTROL)
+    public void updateMediaTapToTransferSenderDisplay(
+            @MediaTransferSenderState int displayState,
+            @NonNull MediaRoute2Info routeInfo,
+            @Nullable Executor undoExecutor,
+            @Nullable Runnable undoCallback
+    ) {
+        Objects.requireNonNull(routeInfo);
+        if (displayState != MEDIA_TRANSFER_SENDER_STATE_TRANSFER_TO_RECEIVER_SUCCEEDED
+                && displayState != MEDIA_TRANSFER_SENDER_STATE_TRANSFER_TO_THIS_DEVICE_SUCCEEDED
+                && undoCallback != null) {
+            throw new IllegalArgumentException(
+                    "The undoCallback should only be provided when the state is a "
+                            + "transfer succeeded state");
+        }
+        if (undoCallback != null && undoExecutor == null) {
+            throw new IllegalArgumentException(
+                    "You must pass an executor when you pass an undo callback");
+        }
+        IStatusBarService svc = getService();
+        try {
+            UndoCallback callbackProxy = null;
+            if (undoExecutor != null) {
+                callbackProxy = new UndoCallback(undoExecutor, undoCallback);
+            }
+            svc.updateMediaTapToTransferSenderDisplay(displayState, routeInfo, callbackProxy);
+        } catch (RemoteException e) {
+            e.rethrowFromSystemServer();
+        }
+    }
+
+    /**
+     * Notifies the system of a new media tap-to-transfer state for the <b>receiver</b> device.
+     *
+     * @param displayState the new state for media tap-to-transfer.
+     * @param routeInfo the media route information for the media being transferred.
+     * @param appIcon the icon of the app playing the media.
+     * @param appName the name of the app playing the media.
+     *
+     * @hide
+     */
+    @SystemApi
+    @RequiresPermission(Manifest.permission.MEDIA_CONTENT_CONTROL)
+    public void updateMediaTapToTransferReceiverDisplay(
+            @MediaTransferReceiverState int displayState,
+            @NonNull MediaRoute2Info routeInfo,
+            @Nullable Icon appIcon,
+            @Nullable CharSequence appName) {
+        Objects.requireNonNull(routeInfo);
+        IStatusBarService svc = getService();
+        try {
+            svc.updateMediaTapToTransferReceiverDisplay(displayState, routeInfo, appIcon, appName);
+        } catch (RemoteException e) {
+            e.rethrowFromSystemServer();
+        }
+    }
+
+    /**
+     * Registers a provider that notifies callbacks about the status of nearby devices that are able
+     * to play media.
+     * <p>
+     * If multiple providers are registered, all the providers will be used for nearby device
+     * information.
+     * <p>
+     * @param provider the nearby device information provider to register
+     * <p>
+     * @hide
+     */
+    @SystemApi
+    @RequiresPermission(android.Manifest.permission.MEDIA_CONTENT_CONTROL)
+    public void registerNearbyMediaDevicesProvider(
+            @NonNull NearbyMediaDevicesProvider provider
+    ) {
+        Objects.requireNonNull(provider);
+        if (nearbyMediaDevicesProviderMap.containsKey(provider)) {
+            return;
+        }
+        try {
+            final IStatusBarService svc = getService();
+            NearbyMediaDevicesProviderWrapper providerWrapper =
+                    new NearbyMediaDevicesProviderWrapper(provider);
+            nearbyMediaDevicesProviderMap.put(provider, providerWrapper);
+            svc.registerNearbyMediaDevicesProvider(providerWrapper);
+        } catch (RemoteException e) {
+            throw e.rethrowFromSystemServer();
+        }
+    }
+
+   /**
+     * Unregisters a provider that gives information about nearby devices that are able to play
+     * media.
+     * <p>
+     * See {@link registerNearbyMediaDevicesProvider}.
+     * <p>
+     * @param provider the nearby device information provider to unregister
+     * <p>
+     * @hide
+     */
+    @SystemApi
+    @RequiresPermission(android.Manifest.permission.MEDIA_CONTENT_CONTROL)
+    public void unregisterNearbyMediaDevicesProvider(
+            @NonNull NearbyMediaDevicesProvider provider
+    ) {
+        Objects.requireNonNull(provider);
+        if (!nearbyMediaDevicesProviderMap.containsKey(provider)) {
+            return;
+        }
+        try {
+            final IStatusBarService svc = getService();
+            NearbyMediaDevicesProviderWrapper providerWrapper =
+                    nearbyMediaDevicesProviderMap.get(provider);
+            nearbyMediaDevicesProviderMap.remove(provider);
+            svc.unregisterNearbyMediaDevicesProvider(providerWrapper);
+        } catch (RemoteException e) {
+            throw e.rethrowFromSystemServer();
+        }
+    }
+
+    /**
+     * Checks whether the given package should use session-based actions for its media controls.
+     *
+     * @param packageName App posting media controls
+     * @param user Current user handle
+     * @return true if the app supports session actions
+     *
+     * @hide
+     */
+    @RequiresPermission(allOf = {android.Manifest.permission.READ_COMPAT_CHANGE_CONFIG,
+            android.Manifest.permission.LOG_COMPAT_CHANGE})
+    public static boolean useMediaSessionActionsForApp(String packageName, UserHandle user) {
+        return CompatChanges.isChangeEnabled(MEDIA_CONTROL_SESSION_ACTIONS, packageName, user);
+    }
+
     /** @hide */
     public static String windowStateToString(int state) {
         if (state == WINDOW_STATE_HIDING) return "WINDOW_STATE_HIDING";
@@ -557,6 +879,7 @@ public class StatusBarManager {
         private boolean mSystemIcons;
         private boolean mClock;
         private boolean mNotificationIcons;
+        private boolean mRotationSuggestion;
 
         /** @hide */
         public DisableInfo(int flags1, int flags2) {
@@ -568,6 +891,7 @@ public class StatusBarManager {
             mSystemIcons = (flags1 & DISABLE_SYSTEM_INFO) != 0;
             mClock = (flags1 & DISABLE_CLOCK) != 0;
             mNotificationIcons = (flags1 & DISABLE_NOTIFICATION_ICONS) != 0;
+            mRotationSuggestion = (flags2 & DISABLE2_ROTATE_SUGGESTIONS) != 0;
         }
 
         /** @hide */
@@ -691,14 +1015,24 @@ public class StatusBarManager {
         }
 
         /**
-         * @return {@code true} if no components are disabled (default state)
+         * Returns whether the rotation suggestion is disabled.
          *
+         * @hide
+         */
+        @TestApi
+        public boolean isRotationSuggestionDisabled() {
+            return mRotationSuggestion;
+        }
+
+        /**
+         * @return {@code true} if no components are disabled (default state)
          * @hide
          */
         @SystemApi
         public boolean areAllComponentsEnabled() {
             return !mStatusBarExpansion && !mNavigateHome && !mNotificationPeeking && !mRecents
-                    && !mSearch && !mSystemIcons && !mClock && !mNotificationIcons;
+                    && !mSearch && !mSystemIcons && !mClock && !mNotificationIcons
+                    && !mRotationSuggestion;
         }
 
         /** @hide */
@@ -711,6 +1045,7 @@ public class StatusBarManager {
             mSystemIcons = false;
             mClock = false;
             mNotificationIcons = false;
+            mRotationSuggestion = false;
         }
 
         /**
@@ -720,7 +1055,8 @@ public class StatusBarManager {
          */
         public boolean areAllComponentsDisabled() {
             return mStatusBarExpansion && mNavigateHome && mNotificationPeeking
-                    && mRecents && mSearch && mSystemIcons && mClock && mNotificationIcons;
+                    && mRecents && mSearch && mSystemIcons && mClock && mNotificationIcons
+                    && mRotationSuggestion;
         }
 
         /** @hide */
@@ -733,6 +1069,7 @@ public class StatusBarManager {
             mSystemIcons = true;
             mClock = true;
             mNotificationIcons = true;
+            mRotationSuggestion = true;
         }
 
         @NonNull
@@ -749,6 +1086,7 @@ public class StatusBarManager {
             sb.append(" mSystemIcons=").append(mSystemIcons ? "disabled" : "enabled");
             sb.append(" mClock=").append(mClock ? "disabled" : "enabled");
             sb.append(" mNotificationIcons=").append(mNotificationIcons ? "disabled" : "enabled");
+            sb.append(" mRotationSuggestion=").append(mRotationSuggestion ? "disabled" : "enabled");
 
             return sb.toString();
 
@@ -772,8 +1110,99 @@ public class StatusBarManager {
             if (mSystemIcons) disable1 |= DISABLE_SYSTEM_INFO;
             if (mClock) disable1 |= DISABLE_CLOCK;
             if (mNotificationIcons) disable1 |= DISABLE_NOTIFICATION_ICONS;
+            if (mRotationSuggestion) disable2 |= DISABLE2_ROTATE_SUGGESTIONS;
 
             return new Pair<Integer, Integer>(disable1, disable2);
+        }
+    }
+
+    /**
+     * @hide
+     */
+    static final class RequestResultCallback extends IAddTileResultCallback.Stub {
+
+        @NonNull
+        private final Executor mExecutor;
+        @NonNull
+        private final Consumer<Integer> mCallback;
+
+        RequestResultCallback(@NonNull Executor executor, @NonNull Consumer<Integer> callback) {
+            mExecutor = executor;
+            mCallback = callback;
+        }
+
+        @Override
+        public void onTileRequest(int userResponse) {
+            mExecutor.execute(() -> mCallback.accept(userResponse));
+        }
+    }
+
+    /**
+     * @hide
+     */
+    static final class UndoCallback extends IUndoMediaTransferCallback.Stub {
+        @NonNull
+        private final Executor mExecutor;
+        @NonNull
+        private final Runnable mCallback;
+
+        UndoCallback(@NonNull Executor executor, @NonNull Runnable callback) {
+            mExecutor = executor;
+            mCallback = callback;
+        }
+
+        @Override
+        public void onUndoTriggered() {
+            final long callingIdentity = Binder.clearCallingIdentity();
+            try {
+                mExecutor.execute(mCallback);
+            } finally {
+                restoreCallingIdentity(callingIdentity);
+            }
+        }
+    }
+
+    /**
+     * @hide
+     */
+    static final class NearbyMediaDevicesProviderWrapper extends INearbyMediaDevicesProvider.Stub {
+        @NonNull
+        private final NearbyMediaDevicesProvider mProvider;
+        // Because we're wrapping a {@link NearbyMediaDevicesProvider} in a binder-compatible
+        // interface, we also need to wrap the callbacks that the provider receives. We use
+        // this map to keep track of the original callback and the wrapper callback so that
+        // unregistering the callback works correctly.
+        @NonNull
+        private final Map<INearbyMediaDevicesUpdateCallback, Consumer<List<NearbyDevice>>>
+                mRegisteredCallbacks = new HashMap<>();
+
+        NearbyMediaDevicesProviderWrapper(@NonNull NearbyMediaDevicesProvider provider) {
+            mProvider = provider;
+        }
+
+        @Override
+        public void registerNearbyDevicesCallback(
+                @NonNull INearbyMediaDevicesUpdateCallback callback) {
+            Consumer<List<NearbyDevice>> callbackAsConsumer = nearbyDevices -> {
+                try {
+                    callback.onDevicesUpdated(nearbyDevices);
+                } catch (RemoteException ex) {
+                    throw ex.rethrowFromSystemServer();
+                }
+            };
+
+            mRegisteredCallbacks.put(callback, callbackAsConsumer);
+            mProvider.registerNearbyDevicesCallback(callbackAsConsumer);
+        }
+
+        @Override
+        public void unregisterNearbyDevicesCallback(
+                @NonNull INearbyMediaDevicesUpdateCallback callback) {
+            if (!mRegisteredCallbacks.containsKey(callback)) {
+                return;
+            }
+            mProvider.unregisterNearbyDevicesCallback(mRegisteredCallbacks.get(callback));
+            mRegisteredCallbacks.remove(callback);
         }
     }
 }

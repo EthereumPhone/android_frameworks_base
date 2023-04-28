@@ -43,7 +43,11 @@ filegroup {
     name: "wm_shell_util-sources",
     srcs: [
         "src/com/android/wm/shell/util/**/*.java",
-        "src/com/android/wm/shell/common/split/SplitScreenConstants.java"
+        "src/com/android/wm/shell/common/split/SplitScreenConstants.java",
+        "src/com/android/wm/shell/sysui/ShellSharedConstants.java",
+        "src/com/android/wm/shell/common/TransactionPool.java",
+        "src/com/android/wm/shell/animation/Interpolators.java",
+        "src/com/android/wm/shell/startingsurface/SplashScreenExitAnimationUtils.java",
     ],
     path: "src",
 }
@@ -74,13 +78,13 @@ genrule {
     ],
     tools: ["protologtool"],
     cmd: "$(location protologtool) transform-protolog-calls " +
-      "--protolog-class com.android.internal.protolog.common.ProtoLog " +
-      "--protolog-impl-class com.android.wm.shell.protolog.ShellProtoLogImpl " +
-      "--protolog-cache-class com.android.wm.shell.protolog.ShellProtoLogCache " +
-      "--loggroups-class com.android.wm.shell.protolog.ShellProtoLogGroup " +
-      "--loggroups-jar $(location :wm_shell_protolog-groups) " +
-      "--output-srcjar $(out) " +
-      "$(locations :wm_shell-sources)",
+        "--protolog-class com.android.internal.protolog.common.ProtoLog " +
+        "--protolog-impl-class com.android.wm.shell.protolog.ShellProtoLogImpl " +
+        "--protolog-cache-class com.android.wm.shell.protolog.ShellProtoLogCache " +
+        "--loggroups-class com.android.wm.shell.protolog.ShellProtoLogGroup " +
+        "--loggroups-jar $(location :wm_shell_protolog-groups) " +
+        "--output-srcjar $(out) " +
+        "$(locations :wm_shell-sources)",
     out: ["wm_shell_protolog.srcjar"],
 }
 
@@ -92,13 +96,29 @@ genrule {
     ],
     tools: ["protologtool"],
     cmd: "$(location protologtool) generate-viewer-config " +
-      "--protolog-class com.android.internal.protolog.common.ProtoLog " +
-      "--loggroups-class com.android.wm.shell.protolog.ShellProtoLogGroup " +
-      "--loggroups-jar $(location :wm_shell_protolog-groups) " +
-      "--viewer-conf $(out) " +
-      "$(locations :wm_shell-sources)",
+        "--protolog-class com.android.internal.protolog.common.ProtoLog " +
+        "--loggroups-class com.android.wm.shell.protolog.ShellProtoLogGroup " +
+        "--loggroups-jar $(location :wm_shell_protolog-groups) " +
+        "--viewer-conf $(out) " +
+        "$(locations :wm_shell-sources)",
     out: ["wm_shell_protolog.json"],
 }
+
+genrule {
+    name: "protolog.json.gz",
+    srcs: [":generate-wm_shell_protolog.json"],
+    out: ["wmshell.protolog.json.gz"],
+    cmd: "$(location minigzip) -c < $(in) > $(out)",
+    tools: ["minigzip"],
+}
+
+prebuilt_etc {
+    name: "wmshell.protolog.json.gz",
+    system_ext_specific: true,
+    src: ":protolog.json.gz",
+    filename_from_src: true,
+}
+
 // End ProtoLog
 
 java_library {
@@ -122,12 +142,10 @@ android_library {
     resource_dirs: [
         "res",
     ],
-    java_resources: [
-        ":generate-wm_shell_protolog.json"
-    ],
     static_libs: [
         "androidx.appcompat_appcompat",
         "androidx.arch.core_core-runtime",
+        "androidx-constraintlayout_constraintlayout",
         "androidx.dynamicanimation_dynamicanimation",
         "androidx.recyclerview_recyclerview",
         "kotlinx-coroutines-android",

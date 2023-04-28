@@ -59,7 +59,7 @@ import androidx.test.filters.SmallTest;
 import androidx.test.runner.AndroidJUnit4;
 
 import com.android.server.vcn.TelephonySubscriptionTracker.TelephonySubscriptionSnapshot;
-import com.android.server.vcn.UnderlyingNetworkTracker.UnderlyingNetworkRecord;
+import com.android.server.vcn.routeselection.UnderlyingNetworkRecord;
 
 import org.junit.Before;
 import org.junit.Test;
@@ -133,8 +133,9 @@ public class VcnGatewayConnectionTest extends VcnGatewayConnectionTestBase {
         capBuilder.setLinkUpstreamBandwidthKbps(TEST_UPSTREAM_BANDWIDTH);
         capBuilder.setLinkDownstreamBandwidthKbps(TEST_DOWNSTREAM_BANDWIDTH);
         capBuilder.setAdministratorUids(new int[] {TEST_UID});
+        final Network underlyingNetwork = mock(Network.class, CALLS_REAL_METHODS);
         UnderlyingNetworkRecord record = new UnderlyingNetworkRecord(
-                mock(Network.class, CALLS_REAL_METHODS),
+                underlyingNetwork,
                 capBuilder.build(), new LinkProperties(), false);
         final NetworkCapabilities vcnCaps =
                 VcnGatewayConnection.buildNetworkCapabilities(
@@ -145,6 +146,7 @@ public class VcnGatewayConnectionTest extends VcnGatewayConnectionTestBase {
         assertTrue(vcnCaps.hasTransport(TRANSPORT_CELLULAR));
         assertTrue(vcnCaps.hasCapability(NET_CAPABILITY_NOT_METERED));
         assertTrue(vcnCaps.hasCapability(NET_CAPABILITY_NOT_ROAMING));
+        assertTrue(vcnCaps.getUnderlyingNetworks().equals(List.of(underlyingNetwork)));
 
         for (int cap : VcnGatewayConnectionConfigTest.EXPOSED_CAPS) {
             if (cap == NET_CAPABILITY_INTERNET || cap == NET_CAPABILITY_DUN) {
@@ -211,7 +213,8 @@ public class VcnGatewayConnectionTest extends VcnGatewayConnectionTestBase {
                         VcnGatewayConnectionConfigTest.buildTestConfig(),
                         tunnelIface,
                         childSessionConfig,
-                        record);
+                        record,
+                        mIkeConnectionInfo);
 
         verify(mDeps).getUnderlyingIfaceMtu(LOOPBACK_IFACE);
 
@@ -224,7 +227,8 @@ public class VcnGatewayConnectionTest extends VcnGatewayConnectionTestBase {
                         VcnGatewayConnectionConfigTest.buildTestConfig(),
                         tunnelIface,
                         childSessionConfig,
-                        record);
+                        record,
+                        mIkeConnectionInfo);
 
         verify(mDeps, times(2)).getUnderlyingIfaceMtu(LOOPBACK_IFACE);
 
@@ -236,14 +240,14 @@ public class VcnGatewayConnectionTest extends VcnGatewayConnectionTestBase {
     }
 
     @Test
-    public void testSubscriptionSnapshotUpdateNotifiesUnderlyingNetworkTracker() {
+    public void testSubscriptionSnapshotUpdateNotifiesUnderlyingNetworkController() {
         verifyWakeLockSetUp();
 
         final TelephonySubscriptionSnapshot updatedSnapshot =
                 mock(TelephonySubscriptionSnapshot.class);
         mGatewayConnection.updateSubscriptionSnapshot(updatedSnapshot);
 
-        verify(mUnderlyingNetworkTracker).updateSubscriptionSnapshot(eq(updatedSnapshot));
+        verify(mUnderlyingNetworkController).updateSubscriptionSnapshot(eq(updatedSnapshot));
         verifyWakeLockAcquired();
 
         mTestLooper.dispatchAll();
@@ -254,13 +258,13 @@ public class VcnGatewayConnectionTest extends VcnGatewayConnectionTestBase {
     @Test
     public void testNonNullUnderlyingNetworkRecordUpdateCancelsAlarm() {
         mGatewayConnection
-                .getUnderlyingNetworkTrackerCallback()
+                .getUnderlyingNetworkControllerCallback()
                 .onSelectedUnderlyingNetworkChanged(null);
 
         verifyDisconnectRequestAlarmAndGetCallback(false /* expectCanceled */);
 
         mGatewayConnection
-                .getUnderlyingNetworkTrackerCallback()
+                .getUnderlyingNetworkControllerCallback()
                 .onSelectedUnderlyingNetworkChanged(TEST_UNDERLYING_NETWORK_RECORD_1);
 
         verify(mDisconnectRequestAlarm).cancel();

@@ -187,9 +187,9 @@ public final class UsageStats implements Parcelable {
         mLaunchCount = stats.mLaunchCount;
         mAppLaunchCount = stats.mAppLaunchCount;
         mLastEvent = stats.mLastEvent;
-        mActivities = stats.mActivities;
-        mForegroundServices = stats.mForegroundServices;
-        mChooserCounts = stats.mChooserCounts;
+        mActivities = stats.mActivities.clone();
+        mForegroundServices = new ArrayMap<>(stats.mForegroundServices);
+        mChooserCounts = new ArrayMap<>(stats.mChooserCounts);
     }
 
     /**
@@ -290,6 +290,17 @@ public final class UsageStats implements Parcelable {
     @CurrentTimeMillisLong
     public long getLastTimeAnyComponentUsed() {
         return mLastTimeComponentUsed;
+    }
+
+    /**
+     * Returns the last time the package was used - defined by the latest of
+     * mLastTimeUsed, mLastTimeVisible, mLastTimeForegroundServiceUsed, or mLastTimeComponentUsed.
+     * @hide
+     */
+    public long getLastTimePackageUsed() {
+        return Math.max(mLastTimeUsed,
+                        Math.max(mLastTimeVisible,
+                                 Math.max(mLastTimeForegroundServiceUsed, mLastTimeComponentUsed)));
     }
 
     /**

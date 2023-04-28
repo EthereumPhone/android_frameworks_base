@@ -190,6 +190,11 @@
 
                 </LinearLayout>
 
+                <ViewStub android:id="@+id/secondary_mobile_network_stub"
+                  android:inflatedId="@+id/secondary_mobile_network_layout"
+                  android:layout="@layout/qs_dialog_secondary_mobile_network"
+                  style="@style/InternetDialog.Network"/>
+
                 <LinearLayout
                     android:id="@+id/turn_on_wifi_layout"
                     style="@style/InternetDialog.Network"
@@ -198,20 +203,29 @@
                     android:clickable="false"
                     android:focusable="false">
 
-                    <FrameLayout
-                        android:layout_weight="1"
-                        android:orientation="vertical"
-                        android:clickable="false"
+                    <LinearLayout
                         android:layout_width="wrap_content"
-                        android:layout_height="match_parent">
+                        android:layout_height="match_parent"
+                        android:layout_weight="1"
+                        android:gravity="start|center_vertical"
+                        android:orientation="vertical"
+                        android:clickable="false">
                         <TextView
                             android:id="@+id/wifi_toggle_title"
                             android:text="@string/turn_on_wifi"
                             android:layout_width="wrap_content"
-                            android:layout_height="match_parent"
+                            android:layout_height="wrap_content"
                             android:gravity="start|center_vertical"
                             android:textAppearance="@style/TextAppearance.InternetDialog"/>
-                    </FrameLayout>
+                        <TextView
+                            android:id="@+id/wifi_toggle_summary"
+                            android:text="@string/wifitrackerlib_admin_restricted_network"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:gravity="start|center_vertical"
+                            android:textAppearance="@style/TextAppearance.InternetDialog.Secondary"
+                            android:visibility="gone"/>
+                    </LinearLayout>
 
                     <FrameLayout
                         android:layout_width="@dimen/settingslib_switch_track_width"
@@ -298,22 +312,15 @@
 
             <LinearLayout
                 android:id="@+id/see_all_layout"
-                android:layout_width="match_parent"
+                style="@style/InternetDialog.Network"
                 android:layout_height="64dp"
-                android:clickable="true"
-                android:focusable="true"
-                android:background="?android:attr/selectableItemBackground"
-                android:gravity="center_vertical|center_horizontal"
-                android:orientation="horizontal"
-                android:paddingStart="22dp"
-                android:paddingEnd="22dp">
+                android:paddingStart="20dp">
 
                 <FrameLayout
                     android:layout_width="24dp"
                     android:layout_height="24dp"
                     android:clickable="false"
-                    android:layout_gravity="center_vertical|start"
-                    android:layout_marginStart="@dimen/internet_dialog_network_layout_margin">
+                    android:layout_gravity="center_vertical|start">
                     <ImageView
                         android:id="@+id/arrow_forward"
                         android:src="@drawable/ic_arrow_forward"

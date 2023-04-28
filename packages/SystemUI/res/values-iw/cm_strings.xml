@@ -18,8 +18,6 @@
  */
 -->
 <resources xmlns:xliff="urn:oasis:names:tc:xliff:document:1.2">
-    <string name="accessibility_dpad_left">סמן שמאלה</string>
-    <string name="accessibility_dpad_right">סמן ימינה</string>
     <string name="global_action_restart_system">מערכת</string>
     <string name="global_action_restart_recovery">שחזור (Recovery)</string>
     <string name="global_action_restart_bootloader">מנהל אתחול (bootloader)</string>
@@ -33,32 +31,22 @@
     <string name="quick_settings_ambient_display_label">תצוגת התראות עמומה</string>
     <string name="accessibility_quick_settings_ambient_display_off">תצוגת התראות עמומה כבויה.</string>
     <string name="accessibility_quick_settings_ambient_display_on">תצוגת התראות עמומה פעילה.</string>
-    <string name="accessibility_quick_settings_ambient_display_changed_off">תצוגת התראות עמומה כובתה.</string>
-    <string name="accessibility_quick_settings_ambient_display_changed_on">תצוגת התראות עמומה הופעלה.</string>
     <string name="quick_settings_caffeine_label">קפאין</string>
     <string name="accessibility_quick_settings_caffeine_off">קפאין כבוי.</string>
     <string name="accessibility_quick_settings_caffeine_on">קפאין פועל.</string>
     <string name="quick_settings_heads_up_label">התראות קופצות</string>
     <string name="accessibility_quick_settings_heads_up_off">התראות קופצות כבויות.</string>
     <string name="accessibility_quick_settings_heads_up_on">התראות קופצות פעילות.</string>
-    <string name="accessibility_quick_settings_heads_up_changed_off">התראות קופצות כובו.</string>
-    <string name="accessibility_quick_settings_heads_up_changed_on">התראות קופצות הופעלו.</string>
     <string name="quick_settings_powershare_enabled_label">טעינה אלחוטית הפוכה מופעלת</string>
     <string name="quick_settings_reading_mode">מצב קריאה</string>
     <string name="accessibility_quick_settings_reading_mode_on">מצב קריאה דולק.</string>
     <string name="accessibility_quick_settings_reading_mode_off">מצב קריאה כבוי.</string>
-    <string name="accessibility_quick_settings_reading_mode_changed_on">מצב קריאה הודלק.</string>
-    <string name="accessibility_quick_settings_reading_mode_changed_off">מצב קריאה כובה.</string>
     <string name="quick_settings_sync_label">סנכרון</string>
     <string name="accessibility_quick_settings_sync_off">סנכרון כבוי.</string>
     <string name="accessibility_quick_settings_sync_on">סנכרון מופעל.</string>
-    <string name="accessibility_quick_settings_sync_changed_off">סנכרון כובה.</string>
-    <string name="accessibility_quick_settings_sync_changed_on">סנכרון הופעל.</string>
     <string name="quick_settings_profiles_label">פרופילי מערכת</string>
     <string name="accessibility_quick_settings_profiles_off">פרופילים כבויים.</string>
     <string name="accessibility_quick_settings_profiles">פרופיל: <xliff:g id="profile" example="Default">%s</xliff:g>.</string>
-    <string name="accessibility_quick_settings_profiles_changed_off">פרופילים כובו.</string>
-    <string name="accessibility_quick_settings_profiles_changed">פרופיל שונה ל-<xliff:g id="profile" example="Default">%s</xliff:g>.</string>
     <string name="quick_settings_usb_tether_label">קשירת USB</string>
     <string name="quick_settings_vpn_label">VPN</string>
     <string name="quick_settings_vpn_connect_dialog_title">התחבר אל\u2026</string>
@@ -66,4 +54,6 @@
     <string name="vpn_credentials_username">שם משתמש</string>
     <string name="vpn_credentials_password">סיסמה</string>
     <string name="vpn_credentials_dialog_connect">התחבר</string>
+    <string name="accessibility_dpad_left">סמן שמאלה</string>
+    <string name="accessibility_dpad_right">סמן ימינה</string>
 </resources>

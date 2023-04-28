@@ -16,27 +16,50 @@
 
 package com.android.keyguard;
 
+import static android.content.res.Configuration.ORIENTATION_LANDSCAPE;
+import static android.content.res.Configuration.ORIENTATION_PORTRAIT;
+import static android.provider.Settings.Global.ONE_HANDED_KEYGUARD_SIDE;
+import static android.provider.Settings.Global.ONE_HANDED_KEYGUARD_SIDE_LEFT;
+import static android.provider.Settings.Global.ONE_HANDED_KEYGUARD_SIDE_RIGHT;
 import static android.view.WindowInsets.Type.ime;
 import static android.view.WindowInsets.Type.systemBars;
 
+import static androidx.constraintlayout.widget.ConstraintSet.CHAIN_SPREAD;
+import static androidx.constraintlayout.widget.ConstraintSet.MATCH_CONSTRAINT;
+import static androidx.constraintlayout.widget.ConstraintSet.PARENT_ID;
+import static androidx.constraintlayout.widget.ConstraintSet.WRAP_CONTENT;
+
+import static com.android.keyguard.KeyguardSecurityContainer.MODE_DEFAULT;
+import static com.android.keyguard.KeyguardSecurityContainer.MODE_ONE_HANDED;
+import static com.android.keyguard.KeyguardSecurityContainer.MODE_USER_SWITCHER;
+
+import static com.google.common.truth.Truth.assertThat;
+
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyInt;
-import static org.mockito.Mockito.never;
-import static org.mockito.Mockito.reset;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import android.content.pm.UserInfo;
+import android.content.res.Configuration;
 import android.graphics.Insets;
 import android.testing.AndroidTestingRunner;
 import android.testing.TestableLooper;
+import android.view.MotionEvent;
 import android.view.View;
 import android.view.ViewGroup;
 import android.view.WindowInsets;
-import android.view.WindowInsetsController;
-import android.widget.FrameLayout;
 
+import androidx.constraintlayout.widget.ConstraintSet;
 import androidx.test.filters.SmallTest;
 
+import com.android.systemui.R;
 import com.android.systemui.SysuiTestCase;
+import com.android.systemui.classifier.FalsingA11yDelegate;
+import com.android.systemui.plugins.FalsingManager;
+import com.android.systemui.statusbar.policy.UserSwitcherController;
+import com.android.systemui.user.data.source.UserRecord;
+import com.android.systemui.util.settings.GlobalSettings;
 
 import org.junit.Before;
 import org.junit.Rule;
@@ -46,22 +69,28 @@ import org.mockito.Mock;
 import org.mockito.junit.MockitoJUnit;
 import org.mockito.junit.MockitoRule;
 
+import java.util.ArrayList;
+
 @SmallTest
 @RunWith(AndroidTestingRunner.class)
 @TestableLooper.RunWithLooper()
 public class KeyguardSecurityContainerTest extends SysuiTestCase {
-    private static final int SCREEN_WIDTH = 1600;
-    private static final int FAKE_MEASURE_SPEC =
-            View.MeasureSpec.makeMeasureSpec(SCREEN_WIDTH, View.MeasureSpec.EXACTLY);
+
+    private static final int VIEW_WIDTH = 1600;
+    private static final int VIEW_HEIGHT = 900;
 
     @Rule
     public MockitoRule mRule = MockitoJUnit.rule();
 
-    @Mock
-    private WindowInsetsController mWindowInsetsController;
-
-    @Mock
     private KeyguardSecurityViewFlipper mSecurityViewFlipper;
+    @Mock
+    private GlobalSettings mGlobalSettings;
+    @Mock
+    private FalsingManager mFalsingManager;
+    @Mock
+    private UserSwitcherController mUserSwitcherController;
+    @Mock
+    private FalsingA11yDelegate mFalsingA11yDelegate;
 
     private KeyguardSecurityContainer mKeyguardSecurityContainer;
 
@@ -70,42 +99,30 @@ public class KeyguardSecurityContainerTest extends SysuiTestCase {
         // Needed here, otherwise when mKeyguardSecurityContainer is created below, it'll cache
         // the real references (rather than the TestableResources that this call creates).
         mContext.ensureTestableResources();
-        FrameLayout.LayoutParams securityViewFlipperLayoutParams = new FrameLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT);
 
-        when(mSecurityViewFlipper.getWindowInsetsController()).thenReturn(mWindowInsetsController);
-        when(mSecurityViewFlipper.getLayoutParams()).thenReturn(securityViewFlipperLayoutParams);
+        mSecurityViewFlipper = new KeyguardSecurityViewFlipper(getContext());
+        mSecurityViewFlipper.setId(View.generateViewId());
         mKeyguardSecurityContainer = new KeyguardSecurityContainer(getContext());
+        mKeyguardSecurityContainer.setRight(VIEW_WIDTH);
+        mKeyguardSecurityContainer.setLeft(0);
+        mKeyguardSecurityContainer.setTop(0);
+        mKeyguardSecurityContainer.setBottom(VIEW_HEIGHT);
+        mKeyguardSecurityContainer.setId(View.generateViewId());
         mKeyguardSecurityContainer.mSecurityViewFlipper = mSecurityViewFlipper;
         mKeyguardSecurityContainer.addView(mSecurityViewFlipper, new ViewGroup.LayoutParams(
                 ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+
+        when(mUserSwitcherController.getCurrentUserName()).thenReturn("Test User");
+        when(mUserSwitcherController.isKeyguardShowing()).thenReturn(true);
     }
 
     @Test
-    public void onMeasure_usesHalfWidthWithOneHandedModeEnabled() {
-        mKeyguardSecurityContainer.setOneHandedMode(/* oneHandedMode= */true);
-
-        int halfWidthMeasureSpec =
-                View.MeasureSpec.makeMeasureSpec(SCREEN_WIDTH / 2, View.MeasureSpec.EXACTLY);
-        mKeyguardSecurityContainer.onMeasure(FAKE_MEASURE_SPEC, FAKE_MEASURE_SPEC);
-
-        verify(mSecurityViewFlipper).measure(halfWidthMeasureSpec, FAKE_MEASURE_SPEC);
-    }
-
-    @Test
-    public void onMeasure_usesFullWidthWithOneHandedModeDisabled() {
-        mKeyguardSecurityContainer.setOneHandedMode(/* oneHandedMode= */false);
-
-        mKeyguardSecurityContainer.measure(FAKE_MEASURE_SPEC, FAKE_MEASURE_SPEC);
-        verify(mSecurityViewFlipper).measure(FAKE_MEASURE_SPEC, FAKE_MEASURE_SPEC);
-    }
-
-    @Test
-    public void onMeasure_respectsViewInsets() {
-        int imeInsetAmount = 100;
-        int systemBarInsetAmount = 10;
-
-        mKeyguardSecurityContainer.setOneHandedMode(/* oneHandedMode= */false);
+    public void testOnApplyWindowInsets() {
+        int paddingBottom = getContext().getResources()
+                .getDimensionPixelSize(R.dimen.keyguard_security_view_bottom_margin);
+        int imeInsetAmount = paddingBottom + 1;
+        int systemBarInsetAmount = 0;
+        initMode(MODE_DEFAULT);
 
         Insets imeInset = Insets.of(0, 0, 0, imeInsetAmount);
         Insets systemBarInset = Insets.of(0, 0, 0, systemBarInsetAmount);
@@ -115,21 +132,18 @@ public class KeyguardSecurityContainerTest extends SysuiTestCase {
                 .setInsetsIgnoringVisibility(systemBars(), systemBarInset)
                 .build();
 
-        // It's reduced by the max of the systembar and IME, so just subtract IME inset.
-        int expectedHeightMeasureSpec = View.MeasureSpec.makeMeasureSpec(
-                SCREEN_WIDTH - imeInsetAmount, View.MeasureSpec.EXACTLY);
-
         mKeyguardSecurityContainer.onApplyWindowInsets(insets);
-        mKeyguardSecurityContainer.measure(FAKE_MEASURE_SPEC, FAKE_MEASURE_SPEC);
-        verify(mSecurityViewFlipper).measure(FAKE_MEASURE_SPEC, expectedHeightMeasureSpec);
+        assertThat(mKeyguardSecurityContainer.getPaddingBottom()).isEqualTo(imeInsetAmount);
     }
 
     @Test
-    public void onMeasure_respectsViewInsets_largerSystembar() {
+    public void testOnApplyWindowInsets_largerSystembar() {
         int imeInsetAmount = 0;
-        int systemBarInsetAmount = 10;
+        int paddingBottom = getContext().getResources()
+                .getDimensionPixelSize(R.dimen.keyguard_security_view_bottom_margin);
+        int systemBarInsetAmount = paddingBottom + 1;
 
-        mKeyguardSecurityContainer.setOneHandedMode(/* oneHandedMode= */false);
+        initMode(MODE_DEFAULT);
 
         Insets imeInset = Insets.of(0, 0, 0, imeInsetAmount);
         Insets systemBarInset = Insets.of(0, 0, 0, systemBarInsetAmount);
@@ -139,50 +153,274 @@ public class KeyguardSecurityContainerTest extends SysuiTestCase {
                 .setInsetsIgnoringVisibility(systemBars(), systemBarInset)
                 .build();
 
-        int expectedHeightMeasureSpec = View.MeasureSpec.makeMeasureSpec(
-                SCREEN_WIDTH - systemBarInsetAmount, View.MeasureSpec.EXACTLY);
-
         mKeyguardSecurityContainer.onApplyWindowInsets(insets);
-        mKeyguardSecurityContainer.measure(FAKE_MEASURE_SPEC, FAKE_MEASURE_SPEC);
-        verify(mSecurityViewFlipper).measure(FAKE_MEASURE_SPEC, expectedHeightMeasureSpec);
+        assertThat(mKeyguardSecurityContainer.getPaddingBottom()).isEqualTo(systemBarInsetAmount);
+    }
+
+    @Test
+    public void testDefaultViewMode() {
+        initMode(MODE_ONE_HANDED);
+        initMode(MODE_DEFAULT);
+        ConstraintSet.Constraint viewFlipperConstraint =
+                getViewConstraint(mSecurityViewFlipper.getId());
+        assertThat(viewFlipperConstraint.layout.topToTop).isEqualTo(PARENT_ID);
+        assertThat(viewFlipperConstraint.layout.startToStart).isEqualTo(PARENT_ID);
+        assertThat(viewFlipperConstraint.layout.endToEnd).isEqualTo(PARENT_ID);
+        assertThat(viewFlipperConstraint.layout.bottomToBottom).isEqualTo(PARENT_ID);
+    }
+
+    @Test
+    public void updatePosition_movesKeyguard() {
+        setupForUpdateKeyguardPosition(/* oneHandedMode= */ true);
+        mKeyguardSecurityContainer.updatePositionByTouchX(
+                mKeyguardSecurityContainer.getWidth() - 1f);
+
+        verify(mGlobalSettings).putInt(ONE_HANDED_KEYGUARD_SIDE, ONE_HANDED_KEYGUARD_SIDE_RIGHT);
+        ConstraintSet.Constraint viewFlipperConstraint =
+                getViewConstraint(mSecurityViewFlipper.getId());
+        assertThat(viewFlipperConstraint.layout.widthPercent).isEqualTo(0.5f);
+        assertThat(viewFlipperConstraint.layout.topToTop).isEqualTo(PARENT_ID);
+        assertThat(viewFlipperConstraint.layout.rightToRight).isEqualTo(PARENT_ID);
+        assertThat(viewFlipperConstraint.layout.leftToLeft).isEqualTo(-1);
+
+        mKeyguardSecurityContainer.updatePositionByTouchX(1f);
+        verify(mGlobalSettings).putInt(ONE_HANDED_KEYGUARD_SIDE, ONE_HANDED_KEYGUARD_SIDE_LEFT);
+
+        viewFlipperConstraint =
+                getViewConstraint(mSecurityViewFlipper.getId());
+        assertThat(viewFlipperConstraint.layout.widthPercent).isEqualTo(0.5f);
+        assertThat(viewFlipperConstraint.layout.topToTop).isEqualTo(PARENT_ID);
+        assertThat(viewFlipperConstraint.layout.leftToLeft).isEqualTo(PARENT_ID);
+        assertThat(viewFlipperConstraint.layout.rightToRight).isEqualTo(-1);
+    }
+
+    @Test
+    public void updatePosition_doesntMoveTwoHandedKeyguard() {
+        setupForUpdateKeyguardPosition(/* oneHandedMode= */ false);
+
+        mKeyguardSecurityContainer.updatePositionByTouchX(
+                mKeyguardSecurityContainer.getWidth() - 1f);
+        ConstraintSet.Constraint viewFlipperConstraint =
+                getViewConstraint(mSecurityViewFlipper.getId());
+        assertThat(viewFlipperConstraint.layout.rightToRight).isEqualTo(-1);
+        assertThat(viewFlipperConstraint.layout.leftToLeft).isEqualTo(-1);
+
+        mKeyguardSecurityContainer.updatePositionByTouchX(1f);
+        viewFlipperConstraint =
+                getViewConstraint(mSecurityViewFlipper.getId());
+        assertThat(viewFlipperConstraint.layout.rightToRight).isEqualTo(-1);
+        assertThat(viewFlipperConstraint.layout.leftToLeft).isEqualTo(-1);
+    }
+
+    @Test
+    public void testUserSwitcherModeViewPositionLandscape() {
+        // GIVEN one user has been setup and in landscape
+        when(mUserSwitcherController.getUsers()).thenReturn(buildUserRecords(1));
+        Configuration landscapeConfig = configuration(ORIENTATION_LANDSCAPE);
+        when(getContext().getResources().getConfiguration()).thenReturn(landscapeConfig);
+
+        // WHEN UserSwitcherViewMode is initialized and config has changed
+        setupUserSwitcher();
+        mKeyguardSecurityContainer.onConfigurationChanged(landscapeConfig);
+
+        ConstraintSet.Constraint viewFlipperConstraint =
+                getViewConstraint(mSecurityViewFlipper.getId());
+        ConstraintSet.Constraint userSwitcherConstraint =
+                getViewConstraint(R.id.keyguard_bouncer_user_switcher);
+        assertThat(viewFlipperConstraint.layout.rightToRight).isEqualTo(PARENT_ID);
+        assertThat(viewFlipperConstraint.layout.leftToRight).isEqualTo(
+                R.id.keyguard_bouncer_user_switcher);
+        assertThat(userSwitcherConstraint.layout.leftToLeft).isEqualTo(PARENT_ID);
+        assertThat(userSwitcherConstraint.layout.rightToLeft).isEqualTo(
+                mSecurityViewFlipper.getId());
+        assertThat(viewFlipperConstraint.layout.topToTop).isEqualTo(PARENT_ID);
+        assertThat(viewFlipperConstraint.layout.bottomToBottom).isEqualTo(PARENT_ID);
+        assertThat(userSwitcherConstraint.layout.topToTop).isEqualTo(PARENT_ID);
+        assertThat(userSwitcherConstraint.layout.bottomToBottom).isEqualTo(PARENT_ID);
+        assertThat(userSwitcherConstraint.layout.bottomMargin).isEqualTo(
+                getContext().getResources().getDimensionPixelSize(
+                        R.dimen.bouncer_user_switcher_y_trans));
+        assertThat(viewFlipperConstraint.layout.horizontalChainStyle).isEqualTo(CHAIN_SPREAD);
+        assertThat(userSwitcherConstraint.layout.horizontalChainStyle).isEqualTo(CHAIN_SPREAD);
+        assertThat(viewFlipperConstraint.layout.mHeight).isEqualTo(MATCH_CONSTRAINT);
+        assertThat(userSwitcherConstraint.layout.mHeight).isEqualTo(MATCH_CONSTRAINT);
+    }
+
+    @Test
+    public void testUserSwitcherModeViewPositionPortrait() {
+        // GIVEN one user has been setup and in landscape
+        when(mUserSwitcherController.getUsers()).thenReturn(buildUserRecords(1));
+        Configuration portraitConfig = configuration(ORIENTATION_PORTRAIT);
+        when(getContext().getResources().getConfiguration()).thenReturn(portraitConfig);
+
+        // WHEN UserSwitcherViewMode is initialized and config has changed
+        setupUserSwitcher();
+        mKeyguardSecurityContainer.onConfigurationChanged(portraitConfig);
+
+        ConstraintSet.Constraint viewFlipperConstraint =
+                getViewConstraint(mSecurityViewFlipper.getId());
+        ConstraintSet.Constraint userSwitcherConstraint =
+                getViewConstraint(R.id.keyguard_bouncer_user_switcher);
+
+        assertThat(viewFlipperConstraint.layout.topToBottom).isEqualTo(
+                R.id.keyguard_bouncer_user_switcher);
+        assertThat(viewFlipperConstraint.layout.bottomToBottom).isEqualTo(PARENT_ID);
+        assertThat(userSwitcherConstraint.layout.topToTop).isEqualTo(PARENT_ID);
+        assertThat(userSwitcherConstraint.layout.bottomToTop).isEqualTo(
+                mSecurityViewFlipper.getId());
+        assertThat(userSwitcherConstraint.layout.topMargin).isEqualTo(
+                getContext().getResources().getDimensionPixelSize(
+                        R.dimen.bouncer_user_switcher_y_trans));
+        assertThat(viewFlipperConstraint.layout.leftToLeft).isEqualTo(PARENT_ID);
+        assertThat(viewFlipperConstraint.layout.rightToRight).isEqualTo(PARENT_ID);
+        assertThat(userSwitcherConstraint.layout.leftToLeft).isEqualTo(PARENT_ID);
+        assertThat(userSwitcherConstraint.layout.rightToRight).isEqualTo(PARENT_ID);
+        assertThat(viewFlipperConstraint.layout.verticalChainStyle).isEqualTo(CHAIN_SPREAD);
+        assertThat(userSwitcherConstraint.layout.verticalChainStyle).isEqualTo(CHAIN_SPREAD);
+        assertThat(viewFlipperConstraint.layout.mHeight).isEqualTo(MATCH_CONSTRAINT);
+        assertThat(userSwitcherConstraint.layout.mHeight).isEqualTo(WRAP_CONTENT);
+        assertThat(userSwitcherConstraint.layout.mWidth).isEqualTo(WRAP_CONTENT);
+    }
+
+    @Test
+    public void testLessThanTwoUsersDoesNotAllowDropDown() {
+        // GIVEN one user has been setup
+        when(mUserSwitcherController.getUsers()).thenReturn(buildUserRecords(1));
+
+        // WHEN UserSwitcherViewMode is initialized
+        setupUserSwitcher();
+
+        // THEN the UserSwitcher anchor should not be clickable
+        ViewGroup anchor = mKeyguardSecurityContainer.findViewById(R.id.user_switcher_anchor);
+        assertThat(anchor.isClickable()).isFalse();
+    }
+
+    @Test
+    public void testTwoOrMoreUsersDoesAllowDropDown() {
+        // GIVEN one user has been setup
+        ArrayList<UserRecord> records = buildUserRecords(2);
+        when(mUserSwitcherController.getCurrentUserRecord()).thenReturn(records.get(0));
+        when(mUserSwitcherController.getUsers()).thenReturn(records);
+
+        // WHEN UserSwitcherViewMode is initialized
+        setupUserSwitcher();
+
+        // THEN the UserSwitcher anchor should not be clickable
+        ViewGroup anchor = mKeyguardSecurityContainer.findViewById(R.id.user_switcher_anchor);
+        assertThat(anchor.isClickable()).isTrue();
+    }
+
+    @Test
+    public void testOnDensityOrFontScaleChanged() {
+        setupUserSwitcher();
+        View oldUserSwitcher = mKeyguardSecurityContainer.findViewById(
+                R.id.keyguard_bouncer_user_switcher);
+        mKeyguardSecurityContainer.onDensityOrFontScaleChanged();
+        View newUserSwitcher = mKeyguardSecurityContainer.findViewById(
+                R.id.keyguard_bouncer_user_switcher);
+        assertThat(oldUserSwitcher).isNotEqualTo(newUserSwitcher);
+    }
+
+    @Test
+    public void testTouchesAreRecognizedAsBeingOnTheOtherSideOfSecurity() {
+        setupUserSwitcher();
+        setViewWidth(VIEW_WIDTH);
+
+        // security is on the right side by default
+        assertThat(mKeyguardSecurityContainer.isTouchOnTheOtherSideOfSecurity(
+                touchEventLeftSide())).isTrue();
+        assertThat(mKeyguardSecurityContainer.isTouchOnTheOtherSideOfSecurity(
+                touchEventRightSide())).isFalse();
+
+        // move security to the left side
+        when(mGlobalSettings.getInt(any(), anyInt())).thenReturn(ONE_HANDED_KEYGUARD_SIDE_LEFT);
+        mKeyguardSecurityContainer.onConfigurationChanged(new Configuration());
+
+        assertThat(mKeyguardSecurityContainer.isTouchOnTheOtherSideOfSecurity(
+                touchEventLeftSide())).isFalse();
+        assertThat(mKeyguardSecurityContainer.isTouchOnTheOtherSideOfSecurity(
+                touchEventRightSide())).isTrue();
+    }
+
+    @Test
+    public void testSecuritySwitchesSidesInLandscapeUserSwitcherMode() {
+        when(getContext().getResources().getConfiguration())
+                .thenReturn(configuration(ORIENTATION_LANDSCAPE));
+        setupUserSwitcher();
+
+        // switch sides
+        when(mGlobalSettings.getInt(any(), anyInt())).thenReturn(ONE_HANDED_KEYGUARD_SIDE_LEFT);
+        mKeyguardSecurityContainer.onConfigurationChanged(new Configuration());
+
+        ConstraintSet.Constraint viewFlipperConstraint = getViewConstraint(
+                mSecurityViewFlipper.getId());
+        assertThat(viewFlipperConstraint.layout.leftToLeft).isEqualTo(PARENT_ID);
+    }
+
+    private Configuration configuration(@Configuration.Orientation int orientation) {
+        Configuration config = new Configuration();
+        config.orientation = orientation;
+        return config;
+    }
+
+    private void setViewWidth(int width) {
+        mKeyguardSecurityContainer.setRight(width);
+        mKeyguardSecurityContainer.setLeft(0);
+    }
+
+    private MotionEvent touchEventLeftSide() {
+        return MotionEvent.obtain(
+                /* downTime= */0,
+                /* eventTime= */0,
+                MotionEvent.ACTION_DOWN,
+                /* x= */VIEW_WIDTH / 3f,
+                /* y= */0,
+                /* metaState= */0);
+    }
+
+    private MotionEvent touchEventRightSide() {
+        return MotionEvent.obtain(
+                /* downTime= */0,
+                /* eventTime= */0,
+                MotionEvent.ACTION_DOWN,
+                /* x= */(VIEW_WIDTH / 3f) * 2,
+                /* y= */0,
+                /* metaState= */0);
+    }
+
+    private void setupUserSwitcher() {
+        when(mGlobalSettings.getInt(any(), anyInt())).thenReturn(ONE_HANDED_KEYGUARD_SIDE_RIGHT);
+        initMode(MODE_USER_SWITCHER);
+    }
+
+    private ArrayList<UserRecord> buildUserRecords(int count) {
+        ArrayList<UserRecord> users = new ArrayList<>();
+        for (int i = 0; i < count; ++i) {
+            UserInfo info = new UserInfo(i /* id */, "Name: " + i, null /* iconPath */,
+                    0 /* flags */);
+            users.add(new UserRecord(info, null, false /* isGuest */, false /* isCurrent */,
+                    false /* isAddUser */, false /* isRestricted */, true /* isSwitchToEnabled */,
+                    false /* isAddSupervisedUser */, null /* enforcedAdmin */,
+                    false /* isManageUsers */));
+        }
+        return users;
     }
 
     private void setupForUpdateKeyguardPosition(boolean oneHandedMode) {
-        mKeyguardSecurityContainer.setOneHandedMode(oneHandedMode);
-        mKeyguardSecurityContainer.setOneHandedModeLeftAligned(true, false);
-
-        mKeyguardSecurityContainer.measure(FAKE_MEASURE_SPEC, FAKE_MEASURE_SPEC);
-        mKeyguardSecurityContainer.layout(0, 0, SCREEN_WIDTH, SCREEN_WIDTH);
-
-        // Clear any interactions with the mock so we know the interactions definitely come from the
-        // below testing.
-        reset(mSecurityViewFlipper);
+        int mode = oneHandedMode ? MODE_ONE_HANDED : MODE_DEFAULT;
+        initMode(mode);
     }
 
-    @Test
-    public void setIsLeftAligned_movesKeyguard() {
-        setupForUpdateKeyguardPosition(/* oneHandedMode= */ true);
-
-        mKeyguardSecurityContainer.setOneHandedModeLeftAligned(
-                /* leftAligned= */false, /* animate= */false);
-        verify(mSecurityViewFlipper).setTranslationX(
-                mKeyguardSecurityContainer.getWidth() - mSecurityViewFlipper.getWidth());
-
-        mKeyguardSecurityContainer.setOneHandedModeLeftAligned(
-                /* leftAligned= */true, /* animate= */false);
-        verify(mSecurityViewFlipper).setTranslationX(0.0f);
+    /** Get the ConstraintLayout constraint of the view. */
+    private ConstraintSet.Constraint getViewConstraint(int viewId) {
+        ConstraintSet constraintSet = new ConstraintSet();
+        constraintSet.clone(mKeyguardSecurityContainer);
+        return constraintSet.getConstraint(viewId);
     }
 
-    @Test
-    public void setIsLeftAligned_doesntMoveTwoHandedKeyguard() {
-        setupForUpdateKeyguardPosition(/* oneHandedMode= */ false);
-
-        mKeyguardSecurityContainer.setOneHandedModeLeftAligned(
-                /* leftAligned= */false, /* animate= */false);
-        verify(mSecurityViewFlipper, never()).setTranslationX(anyInt());
-
-        mKeyguardSecurityContainer.setOneHandedModeLeftAligned(
-                /* leftAligned= */true, /* animate= */false);
-        verify(mSecurityViewFlipper, never()).setTranslationX(anyInt());
+    private void initMode(int mode) {
+        mKeyguardSecurityContainer.initMode(mode, mGlobalSettings, mFalsingManager,
+                mUserSwitcherController, () -> {
+                }, mFalsingA11yDelegate);
     }
 }

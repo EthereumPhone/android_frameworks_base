@@ -30,14 +30,21 @@
         android:id="@+id/status_icon_area"
         android:layout_width="wrap_content"
         android:layout_height="match_parent"
+        android:layout_marginStart="@dimen/system_icons_super_container_margin_start"
         android:paddingTop="@dimen/status_bar_padding_top"
         android:layout_alignParentEnd="true"
         android:gravity="center_vertical|end" >
+
+        <include
+            android:id="@+id/user_switcher_container"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginEnd="@dimen/status_bar_user_chip_end_margin"
+            layout="@layout/status_bar_user_chip_container" />
+
         <FrameLayout android:id="@+id/system_icons_container"
-            android:layout_width="0dp"
+            android:layout_width="wrap_content"
             android:layout_height="match_parent"
-            android:layout_weight="1"
-            android:layout_marginStart="@dimen/system_icons_super_container_margin_start"
             android:layout_marginEnd="@dimen/status_bar_padding_end"
             android:gravity="center_vertical|end">
             <include layout="@layout/system_icons" />

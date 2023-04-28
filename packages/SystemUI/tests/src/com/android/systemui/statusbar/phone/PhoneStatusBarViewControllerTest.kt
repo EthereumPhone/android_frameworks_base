@@ -26,18 +26,25 @@ import androidx.test.filters.SmallTest
 import androidx.test.platform.app.InstrumentationRegistry
 import com.android.systemui.R
 import com.android.systemui.SysuiTestCase
+import com.android.systemui.shade.NotificationPanelViewController
+import com.android.systemui.shade.ShadeControllerImpl
+import com.android.systemui.shade.ShadeLogger
+import com.android.systemui.statusbar.policy.ConfigurationController
 import com.android.systemui.unfold.SysUIUnfoldComponent
 import com.android.systemui.unfold.config.UnfoldTransitionConfig
 import com.android.systemui.unfold.util.ScopedUnfoldTransitionProgressProvider
+import com.android.systemui.user.ui.viewmodel.StatusBarUserChipViewModel
 import com.android.systemui.util.mockito.any
+import com.android.systemui.util.view.ViewUtil
 import com.google.common.truth.Truth.assertThat
 import org.junit.Before
 import org.junit.Test
 import org.mockito.ArgumentCaptor
 import org.mockito.Mock
-import org.mockito.Mockito.spy
-import org.mockito.Mockito.mock
 import org.mockito.Mockito.`when`
+import org.mockito.Mockito.mock
+import org.mockito.Mockito.never
+import org.mockito.Mockito.spy
 import org.mockito.Mockito.verify
 import org.mockito.MockitoAnnotations
 import java.util.Optional
@@ -45,10 +52,8 @@ import java.util.Optional
 @SmallTest
 class PhoneStatusBarViewControllerTest : SysuiTestCase() {
 
-    private val touchEventHandler = TestTouchEventHandler()
-
     @Mock
-    private lateinit var panelViewController: PanelViewController
+    private lateinit var notificationPanelViewController: NotificationPanelViewController
     @Mock
     private lateinit var panelView: ViewGroup
     @Mock
@@ -57,6 +62,18 @@ class PhoneStatusBarViewControllerTest : SysuiTestCase() {
     private lateinit var sysuiUnfoldComponent: SysUIUnfoldComponent
     @Mock
     private lateinit var progressProvider: ScopedUnfoldTransitionProgressProvider
+    @Mock
+    private lateinit var configurationController: ConfigurationController
+    @Mock
+    private lateinit var userChipViewModel: StatusBarUserChipViewModel
+    @Mock
+    private lateinit var centralSurfacesImpl: CentralSurfacesImpl
+    @Mock
+    private lateinit var shadeControllerImpl: ShadeControllerImpl
+    @Mock
+    private lateinit var shadeLogger: ShadeLogger
+    @Mock
+    private lateinit var viewUtil: ViewUtil
 
     private lateinit var view: PhoneStatusBarView
     private lateinit var controller: PhoneStatusBarViewController
@@ -66,29 +83,15 @@ class PhoneStatusBarViewControllerTest : SysuiTestCase() {
     @Before
     fun setUp() {
         MockitoAnnotations.initMocks(this)
-        `when`(panelViewController.view).thenReturn(panelView)
         `when`(sysuiUnfoldComponent.getStatusBarMoveFromCenterAnimationController())
             .thenReturn(moveFromCenterAnimation)
-        // create the view on main thread as it requires main looper
+        // create the view and controller on main thread as it requires main looper
         InstrumentationRegistry.getInstrumentation().runOnMainSync {
             val parent = FrameLayout(mContext) // add parent to keep layout params
             view = LayoutInflater.from(mContext)
                 .inflate(R.layout.status_bar, parent, false) as PhoneStatusBarView
+            controller = createAndInitController(view)
         }
-
-        controller = createController(view)
-    }
-
-    @Test
-    fun constructor_setsTouchHandlerOnView() {
-        val interceptEvent = MotionEvent.obtain(0L, 0L, MotionEvent.ACTION_MOVE, 10f, 10f, 0)
-        val event = MotionEvent.obtain(0L, 0L, MotionEvent.ACTION_DOWN, 0f, 0f, 0)
-
-        view.onInterceptTouchEvent(interceptEvent)
-        view.onTouchEvent(event)
-
-        assertThat(touchEventHandler.lastInterceptEvent).isEqualTo(interceptEvent)
-        assertThat(touchEventHandler.lastEvent).isEqualTo(event)
     }
 
     @Test
@@ -96,13 +99,75 @@ class PhoneStatusBarViewControllerTest : SysuiTestCase() {
         val view = createViewMock()
         val argumentCaptor = ArgumentCaptor.forClass(OnPreDrawListener::class.java)
         unfoldConfig.isEnabled = true
-        controller = createController(view)
-        controller.init()
+        // create the controller on main thread as it requires main looper
+        InstrumentationRegistry.getInstrumentation().runOnMainSync {
+            controller = createAndInitController(view)
+        }
 
         verify(view.viewTreeObserver).addOnPreDrawListener(argumentCaptor.capture())
         argumentCaptor.value.onPreDraw()
 
         verify(moveFromCenterAnimation).onViewsReady(any())
+    }
+
+    @Test
+    fun handleTouchEventFromStatusBar_panelsNotEnabled_returnsFalseAndNoViewEvent() {
+        `when`(centralSurfacesImpl.commandQueuePanelsEnabled).thenReturn(false)
+        val returnVal = view.onTouchEvent(
+                        MotionEvent.obtain(0L, 0L, MotionEvent.ACTION_DOWN, 0f, 0f, 0))
+        assertThat(returnVal).isFalse()
+        verify(notificationPanelViewController, never()).sendTouchEventToView(any())
+    }
+
+    @Test
+    fun handleTouchEventFromStatusBar_viewNotEnabled_returnsTrueAndNoViewEvent() {
+        `when`(centralSurfacesImpl.commandQueuePanelsEnabled).thenReturn(true)
+        `when`(centralSurfacesImpl.notificationPanelViewController)
+                .thenReturn(notificationPanelViewController)
+        `when`(notificationPanelViewController.isViewEnabled).thenReturn(false)
+        val returnVal = view.onTouchEvent(
+                MotionEvent.obtain(0L, 0L, MotionEvent.ACTION_DOWN, 0f, 0f, 0))
+        assertThat(returnVal).isTrue()
+        verify(notificationPanelViewController, never()).sendTouchEventToView(any())
+    }
+
+    @Test
+    fun handleTouchEventFromStatusBar_viewNotEnabledButIsMoveEvent_viewReceivesEvent() {
+        `when`(centralSurfacesImpl.commandQueuePanelsEnabled).thenReturn(true)
+        `when`(centralSurfacesImpl.notificationPanelViewController)
+                .thenReturn(notificationPanelViewController)
+        `when`(notificationPanelViewController.isViewEnabled).thenReturn(false)
+        val event = MotionEvent.obtain(0L, 0L, MotionEvent.ACTION_MOVE, 0f, 0f, 0)
+
+        view.onTouchEvent(event)
+
+        verify(notificationPanelViewController).sendTouchEventToView(event)
+    }
+
+    @Test
+    fun handleTouchEventFromStatusBar_panelAndViewEnabled_viewReceivesEvent() {
+        `when`(centralSurfacesImpl.commandQueuePanelsEnabled).thenReturn(true)
+        `when`(centralSurfacesImpl.notificationPanelViewController)
+                .thenReturn(notificationPanelViewController)
+        `when`(notificationPanelViewController.isViewEnabled).thenReturn(true)
+        val event = MotionEvent.obtain(0L, 0L, MotionEvent.ACTION_DOWN, 0f, 2f, 0)
+
+        view.onTouchEvent(event)
+
+        verify(notificationPanelViewController).sendTouchEventToView(event)
+    }
+
+    @Test
+    fun handleTouchEventFromStatusBar_topEdgeTouch_viewNeverReceivesEvent() {
+        `when`(centralSurfacesImpl.commandQueuePanelsEnabled).thenReturn(true)
+        `when`(centralSurfacesImpl.notificationPanelViewController)
+                .thenReturn(notificationPanelViewController)
+        `when`(notificationPanelViewController.isFullyCollapsed).thenReturn(true)
+        val event = MotionEvent.obtain(0L, 0L, MotionEvent.ACTION_DOWN, 0f, 0f, 0)
+
+        view.onTouchEvent(event)
+
+        verify(notificationPanelViewController, never()).sendTouchEventToView(any())
     }
 
     private fun createViewMock(): PhoneStatusBarView {
@@ -113,28 +178,24 @@ class PhoneStatusBarViewControllerTest : SysuiTestCase() {
         return view
     }
 
-    private fun createController(view: PhoneStatusBarView): PhoneStatusBarViewController {
+    private fun createAndInitController(view: PhoneStatusBarView): PhoneStatusBarViewController {
         return PhoneStatusBarViewController.Factory(
             Optional.of(sysuiUnfoldComponent),
-            Optional.of(progressProvider)
-        ).create(view, touchEventHandler)
+            Optional.of(progressProvider),
+            userChipViewModel,
+            centralSurfacesImpl,
+            shadeControllerImpl,
+            shadeLogger,
+            viewUtil,
+            configurationController
+        ).create(view).also {
+            it.init()
+        }
     }
 
     private class UnfoldConfig : UnfoldTransitionConfig {
         override var isEnabled: Boolean = false
         override var isHingeAngleEnabled: Boolean = false
-    }
-
-    private class TestTouchEventHandler : PhoneStatusBarView.TouchEventHandler {
-        var lastEvent: MotionEvent? = null
-        var lastInterceptEvent: MotionEvent? = null
-
-        override fun onInterceptTouchEvent(event: MotionEvent?) {
-            lastInterceptEvent = event
-        }
-        override fun handleTouchEvent(event: MotionEvent?): Boolean {
-            lastEvent = event
-            return false
-        }
+        override val halfFoldedTimeoutMillis: Int = 0
     }
 }

@@ -15,80 +15,177 @@
  */
 package com.android.systemui.statusbar.phone
 
+import android.app.StatusBarManager.WINDOW_STATE_SHOWING
+import android.app.StatusBarManager.WINDOW_STATUS_BAR
+import android.content.res.Configuration
 import android.graphics.Point
+import android.util.Log
+import android.view.MotionEvent
 import android.view.View
 import android.view.ViewGroup
 import android.view.ViewTreeObserver
 import com.android.systemui.R
+import com.android.systemui.shade.ShadeController
+import com.android.systemui.shade.ShadeLogger
 import com.android.systemui.shared.animation.UnfoldMoveFromCenterAnimator
+import com.android.systemui.statusbar.phone.PhoneStatusBarView.TouchEventHandler
+import com.android.systemui.statusbar.policy.ConfigurationController
 import com.android.systemui.unfold.SysUIUnfoldComponent
 import com.android.systemui.unfold.UNFOLD_STATUS_BAR
 import com.android.systemui.unfold.util.ScopedUnfoldTransitionProgressProvider
+import com.android.systemui.user.ui.viewmodel.StatusBarUserChipViewModel
 import com.android.systemui.util.ViewController
 import com.android.systemui.util.kotlin.getOrNull
+import com.android.systemui.util.view.ViewUtil
 import java.util.Optional
 import javax.inject.Inject
 import javax.inject.Named
+
+private const val TAG = "PhoneStatusBarViewController"
 
 /** Controller for [PhoneStatusBarView].  */
 class PhoneStatusBarViewController private constructor(
     view: PhoneStatusBarView,
     @Named(UNFOLD_STATUS_BAR) private val progressProvider: ScopedUnfoldTransitionProgressProvider?,
+    private val centralSurfaces: CentralSurfaces,
+    private val shadeController: ShadeController,
+    private val shadeLogger: ShadeLogger,
     private val moveFromCenterAnimationController: StatusBarMoveFromCenterAnimationController?,
-    touchEventHandler: PhoneStatusBarView.TouchEventHandler
+    private val userChipViewModel: StatusBarUserChipViewModel,
+    private val viewUtil: ViewUtil,
+    private val configurationController: ConfigurationController
 ) : ViewController<PhoneStatusBarView>(view) {
 
+    private val configurationListener = object : ConfigurationController.ConfigurationListener {
+        override fun onConfigChanged(newConfig: Configuration?) {
+            mView.updateResources()
+        }
+    }
+
     override fun onViewAttached() {
-        moveFromCenterAnimationController?.let { animationController ->
-            val statusBarLeftSide: View = mView.findViewById(R.id.status_bar_left_side)
-            val systemIconArea: ViewGroup = mView.findViewById(R.id.system_icon_area)
+        if (moveFromCenterAnimationController == null) return
 
-            val viewsToAnimate = arrayOf(
-                statusBarLeftSide,
-                systemIconArea
-            )
+        val statusBarLeftSide: View = mView.findViewById(R.id.status_bar_start_side_except_heads_up)
+        val systemIconArea: ViewGroup = mView.findViewById(R.id.status_bar_end_side_content)
 
-            mView.viewTreeObserver.addOnPreDrawListener(object :
-                ViewTreeObserver.OnPreDrawListener {
-                override fun onPreDraw(): Boolean {
-                    animationController.onViewsReady(viewsToAnimate)
-                    mView.viewTreeObserver.removeOnPreDrawListener(this)
-                    return true
-                }
-            })
+        val viewsToAnimate = arrayOf(
+            statusBarLeftSide,
+            systemIconArea
+        )
 
-            mView.addOnLayoutChangeListener { _, left, _, right, _, oldLeft, _, oldRight, _ ->
-                val widthChanged = right - left != oldRight - oldLeft
-                if (widthChanged) {
-                    moveFromCenterAnimationController.onStatusBarWidthChanged()
-                }
+        mView.viewTreeObserver.addOnPreDrawListener(object :
+            ViewTreeObserver.OnPreDrawListener {
+            override fun onPreDraw(): Boolean {
+                moveFromCenterAnimationController.onViewsReady(viewsToAnimate)
+                mView.viewTreeObserver.removeOnPreDrawListener(this)
+                return true
+            }
+        })
+
+        mView.addOnLayoutChangeListener { _, left, _, right, _, oldLeft, _, oldRight, _ ->
+            val widthChanged = right - left != oldRight - oldLeft
+            if (widthChanged) {
+                moveFromCenterAnimationController.onStatusBarWidthChanged()
             }
         }
 
         progressProvider?.setReadyToHandleTransition(true)
+        configurationController.addCallback(configurationListener)
     }
 
     override fun onViewDetached() {
         progressProvider?.setReadyToHandleTransition(false)
         moveFromCenterAnimationController?.onViewDetached()
+        configurationController.removeCallback(configurationListener)
     }
 
     init {
-        mView.setTouchEventHandler(touchEventHandler)
+        mView.setTouchEventHandler(PhoneStatusBarViewTouchHandler())
+        mView.init(userChipViewModel)
+    }
+
+    override fun onInit() {
     }
 
     fun setImportantForAccessibility(mode: Int) {
         mView.importantForAccessibility = mode
     }
 
+    /**
+     * Sends a touch event to the status bar view.
+     *
+     * This is required in certain cases because the status bar view is in a separate window from
+     * the rest of SystemUI, and other windows may decide that their touch should instead be treated
+     * as a status bar window touch.
+     */
+    fun sendTouchToView(ev: MotionEvent): Boolean {
+        return mView.dispatchTouchEvent(ev)
+    }
+
+    /**
+     * Returns true if the given (x, y) point (in screen coordinates) is within the status bar
+     * view's range and false otherwise.
+     */
+    fun touchIsWithinView(x: Float, y: Float): Boolean {
+        return viewUtil.touchIsWithinView(mView, x, y)
+    }
+
+    /** Called when a touch event occurred on {@link PhoneStatusBarView}. */
+    fun onTouchEvent(event: MotionEvent) {
+        if (centralSurfaces.statusBarWindowState == WINDOW_STATE_SHOWING) {
+            val upOrCancel =
+                    event.action == MotionEvent.ACTION_UP ||
+                    event.action == MotionEvent.ACTION_CANCEL
+            centralSurfaces.setInteracting(WINDOW_STATUS_BAR,
+                    !upOrCancel || shadeController.isExpandedVisible)
+        }
+    }
+
+    inner class PhoneStatusBarViewTouchHandler : TouchEventHandler {
+        override fun onInterceptTouchEvent(event: MotionEvent) {
+            onTouchEvent(event)
+        }
+
+        override fun handleTouchEvent(event: MotionEvent): Boolean {
+            onTouchEvent(event)
+
+            // If panels aren't enabled, ignore the gesture and don't pass it down to the
+            // panel view.
+            if (!centralSurfaces.commandQueuePanelsEnabled) {
+                if (event.action == MotionEvent.ACTION_DOWN) {
+                    Log.v(TAG, String.format("onTouchForwardedFromStatusBar: panel disabled, " +
+                            "ignoring touch at (${event.x.toInt()},${event.y.toInt()})"))
+                }
+                return false
+            }
+
+            if (event.action == MotionEvent.ACTION_DOWN) {
+                // If the view that would receive the touch is disabled, just have status
+                // bar eat the gesture.
+                if (!centralSurfaces.notificationPanelViewController.isViewEnabled) {
+                    shadeLogger.logMotionEvent(event,
+                            "onTouchForwardedFromStatusBar: panel view disabled")
+                    return true
+                }
+                if (centralSurfaces.notificationPanelViewController.isFullyCollapsed &&
+                        event.y < 1f) {
+                    // b/235889526 Eat events on the top edge of the phone when collapsed
+                    shadeLogger.logMotionEvent(event, "top edge touch ignored")
+                    return true
+                }
+            }
+            return centralSurfaces.notificationPanelViewController.sendTouchEventToView(event)
+        }
+    }
+
     class StatusBarViewsCenterProvider : UnfoldMoveFromCenterAnimator.ViewCenterProvider {
         override fun getViewCenter(view: View, outPoint: Point) =
             when (view.id) {
-                R.id.status_bar_left_side -> {
+                R.id.status_bar_start_side_except_heads_up -> {
                     // items aligned to the start, return start center point
                     getViewEdgeCenter(view, outPoint, isStart = true)
                 }
-                R.id.system_icon_area -> {
+                R.id.status_bar_end_side_content -> {
                     // items aligned to the end, return end center point
                     getViewEdgeCenter(view, outPoint, isStart = false)
                 }
@@ -116,19 +213,27 @@ class PhoneStatusBarViewController private constructor(
     class Factory @Inject constructor(
         private val unfoldComponent: Optional<SysUIUnfoldComponent>,
         @Named(UNFOLD_STATUS_BAR)
-        private val progressProvider: Optional<ScopedUnfoldTransitionProgressProvider>
+        private val progressProvider: Optional<ScopedUnfoldTransitionProgressProvider>,
+        private val userChipViewModel: StatusBarUserChipViewModel,
+        private val centralSurfaces: CentralSurfaces,
+        private val shadeController: ShadeController,
+        private val shadeLogger: ShadeLogger,
+        private val viewUtil: ViewUtil,
+        private val configurationController: ConfigurationController,
     ) {
         fun create(
-            view: PhoneStatusBarView,
-            touchEventHandler: PhoneStatusBarView.TouchEventHandler
+            view: PhoneStatusBarView
         ) =
             PhoneStatusBarViewController(
                 view,
                 progressProvider.getOrNull(),
-                unfoldComponent.map {
-                    it.getStatusBarMoveFromCenterAnimationController()
-                }.getOrNull(),
-                touchEventHandler
+                centralSurfaces,
+                shadeController,
+                shadeLogger,
+                unfoldComponent.getOrNull()?.getStatusBarMoveFromCenterAnimationController(),
+                userChipViewModel,
+                viewUtil,
+                configurationController
             )
     }
 }

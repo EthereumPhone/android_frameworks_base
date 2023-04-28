@@ -16,9 +16,9 @@
 
 package com.android.systemui.statusbar.notification.collection.render
 
-import com.android.systemui.log.LogBuffer
-import com.android.systemui.log.LogLevel
 import com.android.systemui.log.dagger.NotificationLog
+import com.android.systemui.plugins.log.LogBuffer
+import com.android.systemui.plugins.log.LogLevel
 import java.lang.RuntimeException
 import javax.inject.Inject
 
@@ -28,34 +28,42 @@ class ShadeViewDifferLogger @Inject constructor(
     fun logDetachingChild(
         key: String,
         isTransfer: Boolean,
+        isParentRemoved: Boolean,
         oldParent: String?,
         newParent: String?
     ) {
         buffer.log(TAG, LogLevel.DEBUG, {
             str1 = key
             bool1 = isTransfer
+            bool2 = isParentRemoved
             str2 = oldParent
             str3 = newParent
         }, {
-            "Detach $str1 isTransfer=$bool1 oldParent=$str2 newParent=$str3"
+            "Detach $str1 isTransfer=$bool1 isParentRemoved=$bool2 oldParent=$str2 newParent=$str3"
         })
     }
 
-    fun logSkippingDetach(key: String, parent: String?) {
+    fun logSkipDetachingChild(
+            key: String,
+            parentKey: String?,
+            isTransfer: Boolean,
+            isParentRemoved: Boolean
+    ) {
         buffer.log(TAG, LogLevel.DEBUG, {
             str1 = key
-            str2 = parent
-        }, {
-            "Skipping detach of $str1 because its parent $str2 is also being detached"
-        })
+            str2 = parentKey
+            bool1 = isTransfer
+            bool2 = isParentRemoved
+        }, { "Skip detaching $str1 from $str2 isTransfer=$bool1 isParentRemoved=$bool2" })
     }
 
-    fun logAttachingChild(key: String, parent: String) {
+    fun logAttachingChild(key: String, parent: String, atIndex: Int) {
         buffer.log(TAG, LogLevel.DEBUG, {
             str1 = key
             str2 = parent
+            int1 = atIndex
         }, {
-            "Attaching view $str1 to $str2"
+            "Attaching view $str1 to $str2 at index $int1"
         })
     }
 

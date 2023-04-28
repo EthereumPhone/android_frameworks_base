@@ -20,11 +20,11 @@ import static com.android.internal.util.LatencyTracker.ACTION_CHECK_CREDENTIAL;
 import static com.android.internal.util.LatencyTracker.ACTION_CHECK_CREDENTIAL_UNLOCKED;
 import static com.android.keyguard.KeyguardAbsKeyInputView.MINIMUM_PASSWORD_LENGTH_BEFORE_REPORT;
 
-import android.annotation.CallSuper;
 import android.content.res.ColorStateList;
 import android.os.AsyncTask;
 import android.os.CountDownTimer;
 import android.os.SystemClock;
+import android.util.PluralsMessageFormatter;
 import android.view.KeyEvent;
 
 import com.android.internal.util.LatencyTracker;
@@ -38,6 +38,9 @@ import com.android.systemui.R;
 import com.android.systemui.classifier.FalsingClassifier;
 import com.android.systemui.classifier.FalsingCollector;
 
+import java.util.HashMap;
+import java.util.Map;
+
 public abstract class KeyguardAbsKeyInputViewController<T extends KeyguardAbsKeyInputView>
         extends KeyguardInputViewController<T> {
     private final KeyguardUpdateMonitor mKeyguardUpdateMonitor;
@@ -46,7 +49,6 @@ public abstract class KeyguardAbsKeyInputViewController<T extends KeyguardAbsKey
     private final FalsingCollector mFalsingCollector;
     private final EmergencyButtonController mEmergencyButtonController;
     private CountDownTimer mCountdownTimer;
-    protected KeyguardMessageAreaController mMessageAreaController;
     private boolean mDismissing;
     protected AsyncTask<?, ?, ?> mPendingLockCheck;
     protected boolean mResumed;
@@ -76,14 +78,13 @@ public abstract class KeyguardAbsKeyInputViewController<T extends KeyguardAbsKey
             KeyguardMessageAreaController.Factory messageAreaControllerFactory,
             LatencyTracker latencyTracker, FalsingCollector falsingCollector,
             EmergencyButtonController emergencyButtonController) {
-        super(view, securityMode, keyguardSecurityCallback, emergencyButtonController);
+        super(view, securityMode, keyguardSecurityCallback, emergencyButtonController,
+                messageAreaControllerFactory);
         mKeyguardUpdateMonitor = keyguardUpdateMonitor;
         mLockPatternUtils = lockPatternUtils;
         mLatencyTracker = latencyTracker;
         mFalsingCollector = falsingCollector;
         mEmergencyButtonController = emergencyButtonController;
-        KeyguardMessageArea kma = KeyguardMessageArea.findSecurityMessageDisplay(mView);
-        mMessageAreaController = messageAreaControllerFactory.create(kma);
     }
 
     abstract void resetState();
@@ -91,14 +92,12 @@ public abstract class KeyguardAbsKeyInputViewController<T extends KeyguardAbsKey
     @Override
     public void onInit() {
         super.onInit();
-        mMessageAreaController.init();
     }
 
     @Override
     protected void onViewAttached() {
         super.onViewAttached();
         mView.setKeyDownListener(mKeyDownListener);
-        mView.setEnableHaptics(mLockPatternUtils.isTactileFeedbackEnabled());
         mEmergencyButtonController.setEmergencyButtonCallback(mEmergencyButtonCallback);
     }
 
@@ -117,13 +116,6 @@ public abstract class KeyguardAbsKeyInputViewController<T extends KeyguardAbsKey
         }
     }
 
-    @CallSuper
-    @Override
-    public void reloadColors() {
-        super.reloadColors();
-        mMessageAreaController.reloadColors();
-    }
-
     @Override
     public boolean needsInput() {
         return false;
@@ -131,6 +123,10 @@ public abstract class KeyguardAbsKeyInputViewController<T extends KeyguardAbsKey
 
     @Override
     public void showMessage(CharSequence message, ColorStateList colorState) {
+        if (mMessageAreaController == null) {
+            return;
+        }
+
         if (colorState != null) {
             mMessageAreaController.setNextMessageColor(colorState);
         }
@@ -153,9 +149,14 @@ public abstract class KeyguardAbsKeyInputViewController<T extends KeyguardAbsKey
             @Override
             public void onTick(long millisUntilFinished) {
                 int secondsRemaining = (int) Math.round(millisUntilFinished / 1000.0);
-                mMessageAreaController.setMessage(mView.getResources().getQuantityString(
-                        R.plurals.kg_too_many_failed_attempts_countdown,
-                        secondsRemaining, secondsRemaining));
+                Map<String, Object> arguments = new HashMap<>();
+                arguments.put("count", secondsRemaining);
+                mMessageAreaController.setMessage(
+                        PluralsMessageFormatter.format(
+                            mView.getResources(),
+                            arguments,
+                            R.string.kg_too_many_failed_attempts_countdown),
+                        /* animate= */ false);
             }
 
             @Override
@@ -189,8 +190,11 @@ public abstract class KeyguardAbsKeyInputViewController<T extends KeyguardAbsKey
                 mMessageAreaController.setMessage(mView.getWrongPasswordStringId());
             }
             mView.resetPasswordText(true /* animate */, false /* announce deletion if no match */);
+            startErrorAnimation();
         }
     }
+
+    protected void startErrorAnimation() { /* no-op */ }
 
     protected void verifyPasswordAndUnlock() {
         if (mDismissing) return; // already verified but haven't been dismissed; don't do it again.
@@ -257,7 +261,8 @@ public abstract class KeyguardAbsKeyInputViewController<T extends KeyguardAbsKey
         if (reason != PROMPT_REASON_NONE) {
             int promtReasonStringRes = mView.getPromptReasonStringRes(reason);
             if (promtReasonStringRes != 0) {
-                mMessageAreaController.setMessage(promtReasonStringRes);
+                mMessageAreaController.setMessage(
+                        mView.getResources().getString(promtReasonStringRes), false);
             }
         }
     }

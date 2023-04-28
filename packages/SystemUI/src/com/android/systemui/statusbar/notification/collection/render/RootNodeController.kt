@@ -17,6 +17,9 @@
 package com.android.systemui.statusbar.notification.collection.render
 
 import android.view.View
+import com.android.systemui.statusbar.notification.collection.PipelineDumpable
+import com.android.systemui.statusbar.notification.collection.PipelineDumper
+import com.android.systemui.statusbar.notification.row.ExpandableNotificationRow
 import com.android.systemui.statusbar.notification.row.ExpandableView
 import com.android.systemui.statusbar.notification.stack.NotificationListContainer
 
@@ -27,8 +30,11 @@ import com.android.systemui.statusbar.notification.stack.NotificationListContain
 class RootNodeController(
     private val listContainer: NotificationListContainer,
     override val view: View
-) : NodeController {
+) : NodeController, PipelineDumpable {
     override val nodeLabel: String = "<root>"
+    override fun offerToKeepInParentForAnimation(): Boolean = false
+    override fun removeFromParentIfKeptForAnimation(): Boolean = false
+    override fun resetKeepInParentForAnimation() {}
 
     override fun getChildAt(index: Int): View? {
         return listContainer.getContainerChildAt(index)
@@ -40,6 +46,8 @@ class RootNodeController(
 
     override fun addChildAt(child: NodeController, index: Int) {
         listContainer.addContainerViewAt(child.view, index)
+        listContainer.onNotificationViewUpdateFinished()
+        (child.view as? ExpandableNotificationRow)?.isChangingPosition = false
     }
 
     override fun moveChildTo(child: NodeController, index: Int) {
@@ -49,10 +57,15 @@ class RootNodeController(
     override fun removeChild(child: NodeController, isTransfer: Boolean) {
         if (isTransfer) {
             listContainer.setChildTransferInProgress(true)
+            (child.view as? ExpandableNotificationRow)?.isChangingPosition = true
         }
         listContainer.removeContainerView(child.view)
         if (isTransfer) {
             listContainer.setChildTransferInProgress(false)
         }
+    }
+
+    override fun dumpPipeline(d: PipelineDumper) = with(d) {
+        dump("listContainer", listContainer)
     }
 }

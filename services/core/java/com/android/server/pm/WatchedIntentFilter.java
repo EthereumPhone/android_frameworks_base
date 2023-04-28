@@ -84,7 +84,7 @@ public class WatchedIntentFilter
     }
 
     // Convert an {@link IntentFilter} to a {@link WatchedIntentFilter}
-    protected WatchedIntentFilter(IntentFilter f) {
+    public WatchedIntentFilter(IntentFilter f) {
         mFilter = new IntentFilter(f);
     }
 
@@ -668,6 +668,13 @@ public class WatchedIntentFilter
      */
     public boolean debugCheck() {
         return mFilter.debugCheck();
+    }
+
+    /**
+     * @see IntentFilter#checkDataPathAndSchemeSpecificParts()
+     */
+    public boolean checkDataPathAndSchemeSpecificParts() {
+        return mFilter.checkDataPathAndSchemeSpecificParts();
     }
 
     /**
